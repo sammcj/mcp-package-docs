@@ -5,7 +5,7 @@
   "main": "build/index.js",
   "type": "module",
   "bin": {
-    "package-docs-server": "build/index.js"
+    "mcp-package-docs": "build/index.js"
   },
   "files": [
     "build",
@@ -15,6 +15,7 @@
   "scripts": {
     "build": "tsc && chmod +x build/index.js",
     "watch": "tsc -w",
+    "serve": "node build/index.js",
     "format": "prettier --write \"src/**/*.ts\"",
     "inspector": "npx @modelcontextprotocol/inspector build/index.js",
     "bump": "npx -y standard-version --skip.tag && git add . ; git commit -m 'chore: bump version' ; git push",
