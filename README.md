@@ -36,7 +36,7 @@ npx -y mcp-package-docs
   "mcpServers": {
     "package-docs": {
       "command": "npx",
-      "args": ["-y", "mcp-package-docs"],
+      "args": ["-y", "mcp-package-docs"]
     }
   }
 }
