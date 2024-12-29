@@ -10,6 +10,15 @@ import {
 import { exec } from "child_process";
 import { promisify } from "util";
 import axios, { AxiosError } from "axios";
+import { fileURLToPath } from "url"
+import { dirname, join } from "path"
+import { readFileSync } from "fs"
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+const packageJson = JSON.parse(
+  readFileSync(join(__dirname, "..", "package.json"), "utf-8")
+);
 
 const execAsync = promisify(exec);
 
@@ -72,8 +81,8 @@ class PackageDocsServer {
   constructor() {
     this.server = new Server(
       {
-        name: "package-docs-server",
-        version: "0.1.0",
+        name: "mcp-package-docs",
+        version: packageJson.version,
       },
       {
         capabilities: {
@@ -373,7 +382,7 @@ help(${packageName})
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error("Package Docs MCP server running on stdio");
+    console.error("Package Docs MCP server running on stdio, version:", packageJson.version);
   }
 }
 
