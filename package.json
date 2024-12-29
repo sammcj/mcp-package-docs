@@ -5,7 +5,7 @@
   "main": "build/index.js",
   "type": "module",
   "bin": {
-    "package-docs-server": "./build/index.js"
+    "package-docs-server": "build/index.js"
   },
   "files": [
     "build",
