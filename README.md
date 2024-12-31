@@ -2,6 +2,8 @@
 
 An MCP (Model Context Protocol) server that provides LLMs with efficient access to package documentation across multiple programming languages.
 
+<a href="https://glama.ai/mcp/servers/mrk7ul7nz7"><img width="380" height="200" src="https://glama.ai/mcp/servers/mrk7ul7nz7/badge" alt="Package Docs Server MCP server" /></a>
+
 ## Features
 
 - **Multi-Language Support**:
