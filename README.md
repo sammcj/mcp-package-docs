@@ -1,4 +1,5 @@
 # Package Documentation MCP Server
+[![smithery badge](https://smithery.ai/badge/mcp-package-docs)](https://smithery.ai/server/mcp-package-docs)
 
 An MCP (Model Context Protocol) server that provides LLMs with efficient access to package documentation across multiple programming languages.
 
@@ -21,6 +22,15 @@ An MCP (Model Context Protocol) server that provides LLMs with efficient access 
 
 ## Installation
 
+### Installing via Smithery
+
+To install Package Docs for Claude Desktop automatically via [Smithery](https://smithery.ai/server/mcp-package-docs):
+
+```bash
+npx -y @smithery/cli install mcp-package-docs --client claude
+```
+
+### Manual Installation
 ```bash
 npx -y mcp-package-docs
 ```
