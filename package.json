@@ -1,6 +1,6 @@
 {
   "name": "mcp-package-docs",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "An MCP server that provides LLMs with efficient access to package documentation across multiple programming languages",
   "main": "build/index.js",
   "type": "module",
@@ -48,16 +48,16 @@
   },
   "homepage": "https://github.com/sammcj/mcp-package-docs#readme",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.4",
+    "@modelcontextprotocol/sdk": "^1.4.1",
     "axios": "^1.7.9"
   },
   "devDependencies": {
-    "@types/node": "^22.10.2",
-    "@typescript-eslint/eslint-plugin": "8.18.2",
-    "@typescript-eslint/parser": "8.18.2",
-    "eslint": "^9.17.0",
+    "@types/node": "^22.13.0",
+    "@typescript-eslint/eslint-plugin": "8.22.0",
+    "@typescript-eslint/parser": "8.22.0",
+    "eslint": "^9.19.0",
     "prettier": "^3.4.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.3"
   },
   "engines": {
     "node": ">=20"
