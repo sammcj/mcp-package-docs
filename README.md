@@ -16,6 +16,13 @@ An MCP (Model Context Protocol) server that provides LLMs with efficient access 
   - Structured output with description, usage, and examples
   - Focused information to avoid context overload
   - Support for specific symbol/function lookups
+  - Fuzzy and exact search capabilities across documentation
+
+- **Advanced Search Features**:
+  - Search within package documentation
+  - Fuzzy matching for flexible queries
+  - Context-aware results with relevance scoring
+  - Symbol extraction from search results
 
 - **Performance Optimised**:
   - Built-in caching
@@ -54,7 +61,7 @@ npx -y mcp-package-docs
 }
 ```
 
-2. The server provides three tools:
+2. The server provides the following tools:
 
 #### lookup_go_doc
 
@@ -82,6 +89,21 @@ Fetches Python package documentation
 }
 ```
 
+#### search_package_docs
+
+Search within package documentation
+```typescript
+{
+  "name": "search_package_docs",
+  "arguments": {
+    "package": "requests",    // required: package name
+    "query": "authentication", // required: search query
+    "language": "python",     // required: "go", "python", or "npm"
+    "fuzzy": true            // optional: enable fuzzy matching (default: true)
+  }
+}
+```
+
 #### lookup_npm_doc
 
 Fetches NPM package documentation
@@ -97,13 +119,28 @@ Fetches NPM package documentation
 
 ### Example Usage in an LLM
 
+#### Looking up Documentation
+
 ```typescript
-const result = await use_mcp_tool({
+// Looking up documentation
+const docResult = await use_mcp_tool({
   server_name: "package-docs",
   tool_name: "lookup_python_doc",
   arguments: {
     package: "requests",
     symbol: "post"
+  }
+});
+
+// Searching within documentation
+const searchResult = await use_mcp_tool({
+  server_name: "package-docs",
+  tool_name: "search_package_docs",
+  arguments: {
+    package: "requests",
+    query: "authentication headers",
+    language: "python",
+    fuzzy: true
   }
 });
 ```

@@ -49,7 +49,8 @@
   "homepage": "https://github.com/sammcj/mcp-package-docs#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.4.1",
-    "axios": "^1.7.9"
+    "axios": "^1.7.9",
+    "fuse.js": "7.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",

@@ -13,6 +13,7 @@ import axios, { AxiosError } from "axios";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { readFileSync } from "fs";
+import Fuse from "fuse.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -27,7 +28,39 @@ interface DocResult {
   usage?: string;
   example?: string;
   error?: string;
+  searchResults?: SearchResults;
 }
+
+interface SearchResults {
+  results: SearchResult[];
+  totalResults: number;
+}
+
+interface SearchResult {
+  symbol?: string;
+  match: string;
+  context: string;
+  score: number;
+}
+
+interface SearchDocArgs {
+  package: string;
+  query: string;
+  language: "go" | "python" | "npm";
+  fuzzy?: boolean;
+}
+
+const isSearchDocArgs = (args: unknown): args is SearchDocArgs => {
+  return (
+    typeof args === "object" &&
+    args !== null &&
+    typeof (args as SearchDocArgs).package === "string" &&
+    typeof (args as SearchDocArgs).query === "string" &&
+    ["go", "python", "npm"].includes((args as SearchDocArgs).language) &&
+    (typeof (args as SearchDocArgs).fuzzy === "boolean" ||
+      (args as SearchDocArgs).fuzzy === undefined)
+  );
+};
 
 interface GoDocArgs {
   package: string;
@@ -105,6 +138,34 @@ class PackageDocsServer {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
         {
+          name: "search_package_docs",
+          description: "Search for symbols or content within package documentation",
+          inputSchema: {
+            type: "object",
+            properties: {
+              package: {
+                type: "string",
+                description: "Package name to search within"
+              },
+              query: {
+                type: "string",
+                description: "Search query"
+              },
+              language: {
+                type: "string",
+                enum: ["go", "python", "npm"],
+                description: "Package language/ecosystem"
+              },
+              fuzzy: {
+                type: "boolean",
+                description: "Enable fuzzy matching",
+                default: true
+              }
+            },
+            required: ["package", "query", "language"]
+          }
+        },
+        {
           name: "lookup_go_doc",
           description: "Look up Go package documentation",
           inputSchema: {
@@ -181,6 +242,22 @@ class PackageDocsServer {
       let result: DocResult;
 
       switch (request.params.name) {
+        case "search_package_docs":
+          if (!isSearchDocArgs(request.params.arguments)) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Invalid arguments for package documentation search"
+            );
+          }
+          result = {
+            searchResults: await this.searchPackageDocs(
+              request.params.arguments.package,
+              request.params.arguments.query,
+              request.params.arguments.language,
+              request.params.arguments.fuzzy
+            )
+          };
+          break;
         case "lookup_go_doc":
           if (!isGoDocArgs(request.params.arguments)) {
             throw new McpError(
@@ -376,6 +453,101 @@ help(${packageName})
       return {
         error: `Failed to fetch NPM documentation: ${errorMessage}`,
       };
+    }
+  }
+
+  private async searchPackageDocs(
+    packageName: string,
+    query: string,
+    language: "go" | "python" | "npm",
+    fuzzy: boolean = true
+  ): Promise<{ results: SearchResult[]; totalResults: number }> {
+    try {
+      let fullDoc: string;
+
+      // Get full documentation based on language
+      switch (language) {
+        case "go":
+          const { stdout: goDoc } = await execAsync(`go doc -all ${packageName}`);
+          fullDoc = goDoc;
+          break;
+        case "python":
+          const pythonCode = `
+import ${packageName}
+help(${packageName})
+`;
+          const { stdout: pythonDoc } = await execAsync(`python3 -c "${pythonCode}"`);
+          fullDoc = pythonDoc;
+          break;
+        case "npm":
+          const response = await axios.get(
+            `https://registry.npmjs.org/${packageName}`
+          );
+          fullDoc = response.data.readme || "";
+          break;
+        default:
+          throw new Error(`Unsupported language: ${language}`);
+      }
+
+      // Split documentation into sections for better context
+      const sections = fullDoc.split(/\n\n+/);
+
+      if (fuzzy) {
+        // Use Fuse.js for fuzzy searching
+        const fuse = new Fuse(sections, {
+          includeScore: true,
+          threshold: 0.4,
+          minMatchCharLength: 3
+        });
+
+        const searchResults = fuse.search(query);
+
+        return {
+          results: searchResults.map(result => ({
+            match: result.item.substring(0, 150),
+            context: result.item,
+            score: 1 - (result.score || 0),
+            symbol: this.extractSymbol(result.item, language)
+          })),
+          totalResults: searchResults.length
+        };
+      } else {
+        // Use regular expression for exact matching
+        const regex = new RegExp(query, "gi");
+        const matches = sections.filter(section => regex.test(section));
+
+        return {
+          results: matches.map(match => ({
+            match: match.substring(0, 150),
+            context: match,
+            score: 1,
+            symbol: this.extractSymbol(match, language)
+          })),
+          totalResults: matches.length
+        };
+      }
+    } catch (error) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to search documentation: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  private extractSymbol(text: string, language: string): string | undefined {
+    const firstLine = text.split('\n')[0];
+    switch (language) {
+      case "go":
+        const goMatch = firstLine.match(/^(func|type|var|const)\s+(\w+)/);
+        return goMatch?.[2];
+      case "python":
+        const pyMatch = firstLine.match(/^(class|def)\s+(\w+)/);
+        return pyMatch?.[2];
+      case "npm":
+        const npmMatch = firstLine.match(/^#+\s*(`.*`|\w+)/);
+        return npmMatch?.[1]?.replace(/`/g, '');
+      default:
+        return undefined;
     }
   }
 
