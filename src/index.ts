@@ -638,9 +638,16 @@ help(${packageName})
           fullDoc = pythonDoc;
           break;
         case "npm":
-          const response = await axios.get(
-            `https://registry.npmjs.org/${packageName}`
-          );
+          const config = this.getRegistryConfigForPackage(packageName);
+          const packagePath = encodeURIComponent(packageName);
+          const url = `${config.registry}/${packagePath}`;
+
+          const headers: Record<string, string> = {};
+          if (config.token) {
+            headers.Authorization = `Bearer ${config.token}`;
+          }
+
+          const response = await axios.get(url, { headers });
           fullDoc = response.data.readme || "";
           break;
         default:
