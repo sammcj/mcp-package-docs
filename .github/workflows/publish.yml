@@ -32,7 +32,8 @@ jobs:
         run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
 
       - name: Create Git tag
-        if: ${{ !contains(github.event.head_commit.message, 'chore(release)') && github.event_name != 'workflow_dispatch' }}
+        # if: ${{ !contains(github.event.head_commit.message, 'chore(release)') && github.event_name != 'workflow_dispatch' }}
+        if: ${{ contains(github.event.head_commit.message, 'chore(release)') || github.event_name == 'workflow_dispatch' }}
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
@@ -40,7 +41,8 @@ jobs:
           git push origin "v${{ steps.version.outputs.version }}"
 
       - name: Create GitHub Release
-        if: ${{ !contains(github.event.head_commit.message, 'chore(release)') && github.event_name != 'workflow_dispatch' }}
+        # if: ${{ !contains(github.event.head_commit.message, 'chore(release)') && github.event_name != 'workflow_dispatch' }}
+        if: ${{ contains(github.event.head_commit.message, 'chore(release)') || github.event_name == 'workflow_dispatch' }}
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.version.outputs.version }}
