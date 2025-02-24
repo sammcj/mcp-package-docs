@@ -143,6 +143,130 @@ class PackageDocsServer {
     });
   }
 
+  private parseNpmrcContent(
+    content: string,
+    scopeToRegistry: Map<string, string>,
+    registryToToken: Map<string, string>,
+    registryMap: Map<string, NpmConfig>
+  ): void {
+    const lines = content.split("\n");
+
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (!trimmedLine || trimmedLine.startsWith("#")) continue;
+
+      // Handle registry configurations
+      // Match patterns like:
+      // @scope:registry=https://registry.example.com
+      // registry=https://registry.example.com
+      const registryMatch = trimmedLine.match(/^(?:@([^:]+):)?registry=(.+)$/);
+      if (registryMatch) {
+        const [, scope, registry] = registryMatch;
+        const cleanRegistry = registry.replace(/\/$/, "");
+        if (scope) {
+          scopeToRegistry.set(`@${scope}`, cleanRegistry);
+        } else {
+          registryMap.set("default", { registry: cleanRegistry });
+        }
+        continue;
+      }
+
+      // Handle authentication tokens
+      // Match patterns like:
+      // //registry.example.com/:_authToken=token
+      // @scope:_authToken=token
+      // _authToken=token
+      const tokenMatch = trimmedLine.match(/^(?:\/\/([^/]+)\/:|@([^:]+):)?_authToken=(.+)$/);
+      if (tokenMatch) {
+        const [, registry, scope, token] = tokenMatch;
+        if (registry) {
+          // Store token for specific registry
+          registryToToken.set(registry, token);
+        } else if (scope) {
+          // Store token for scope, we'll resolve the registry later
+          const scopeRegistry = scopeToRegistry.get(`@${scope}`);
+          if (scopeRegistry) {
+            const hostname = new URL(scopeRegistry).host;
+            registryToToken.set(hostname, token);
+          }
+        } else {
+          // Default token
+          const defaultRegistry = registryMap.get("default")?.registry;
+          if (defaultRegistry) {
+            const hostname = new URL(defaultRegistry).host;
+            registryToToken.set(hostname, token);
+          }
+        }
+      }
+    }
+  }
+
+  private loadNpmConfig(): Map<string, NpmConfig> {
+    const registryMap = new Map<string, NpmConfig>();
+    registryMap.set("default", { registry: "https://registry.npmjs.org" });
+
+    const scopeToRegistry = new Map<string, string>();
+    const registryToToken = new Map<string, string>();
+
+    // Try to read .npmrc from current directory and parent directories
+    let currentDir = process.cwd();
+    const root = dirname(currentDir);
+    while (currentDir !== root) {
+      const localNpmrcPath = pathJoin(currentDir, ".npmrc");
+      if (existsSync(localNpmrcPath)) {
+        try {
+          const npmrcContent = readFileSync(localNpmrcPath, "utf-8");
+          this.parseNpmrcContent(npmrcContent, scopeToRegistry, registryToToken, registryMap);
+        } catch (error) {
+          console.error(`Error reading local .npmrc at ${localNpmrcPath}:`, error);
+        }
+      }
+      currentDir = dirname(currentDir);
+    }
+
+    // Try to read .npmrc from user's home directory (global config)
+    const globalNpmrcPath = pathJoin(homedir(), ".npmrc");
+    if (existsSync(globalNpmrcPath)) {
+      try {
+        const npmrcContent = readFileSync(globalNpmrcPath, "utf-8");
+        this.parseNpmrcContent(npmrcContent, scopeToRegistry, registryToToken, registryMap);
+      } catch (error) {
+        console.error("Error reading global .npmrc:", error);
+      }
+    }
+
+    try {
+      // Associate tokens with registries
+      for (const [scope, registry] of scopeToRegistry.entries()) {
+        const hostname = new URL(registry).host;
+        const token = registryToToken.get(hostname);
+        registryMap.set(scope, { registry, token });
+      }
+
+      // Ensure default registry has its token if available
+      const defaultConfig = registryMap.get("default");
+      if (defaultConfig) {
+        const hostname = new URL(defaultConfig.registry).host;
+        const token = registryToToken.get(hostname);
+        if (token) {
+          registryMap.set("default", { ...defaultConfig, token });
+        }
+      }
+    } catch (error) {
+      console.error("Error processing .npmrc configurations:", error);
+    }
+
+    return registryMap;
+  }
+
+  private getRegistryConfigForPackage(packageName: string): NpmConfig {
+    if (packageName.startsWith("@")) {
+      const scope = packageName.split("/")[0];
+      return this.registryMap.get(scope) || this.registryMap.get("default") || { registry: "https://registry.npmjs.org" };
+    }
+    return this.registryMap.get("default") || { registry: "https://registry.npmjs.org" };
+  }
+
   private setupToolHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
@@ -422,75 +546,6 @@ help(${packageName})
     }
   }
 
-
-  private loadNpmConfig(): Map<string, NpmConfig> {
-    const registryMap = new Map<string, NpmConfig>();
-    registryMap.set("default", { registry: "https://registry.npmjs.org" });
-
-    // Try to read .npmrc from user's home directory
-    const npmrcPath = pathJoin(homedir(), ".npmrc");
-    if (!existsSync(npmrcPath)) {
-      return registryMap;
-    }
-
-    try {
-      const npmrcContent = readFileSync(npmrcPath, "utf-8");
-      const lines = npmrcContent.split("\n");
-
-      for (const line of lines) {
-        const trimmedLine = line.trim();
-        if (!trimmedLine || trimmedLine.startsWith("#")) continue;
-
-        // Match registry lines (both @scope:registry=url and @scope:url format)
-        const registryMatch = trimmedLine.match(/^(?:@([^:]+):)(?:registry=)?(.+)$/);
-        if (registryMatch && !trimmedLine.includes("_authToken")) {
-          const [, scope, registry] = registryMatch;
-          const key = scope ? `@${scope}` : "default";
-          // Remove trailing slash if present
-          const cleanRegistry = registry.replace(/\/$/, "");
-          registryMap.set(key, { registry: cleanRegistry });
-        }
-
-        // Match auth token lines (handles both //registry.com/:_authToken and _authToken= formats)
-        const tokenMatch = trimmedLine.match(/^(?:\/\/([^/]+)\/|(?:@[^:]+:))?_authToken=(.+)$/);
-        if (tokenMatch) {
-          const [, registry, token] = tokenMatch;
-          if (registry) {
-            // Convert registry hostname to full URL
-            const registryUrl = `https://${registry}`;
-            // Find the scope that uses this registry
-            for (const [key, config] of registryMap.entries()) {
-              if (config.registry.includes(registry)) {
-                config.token = token;
-                registryMap.set(key, config);
-                break;
-              }
-            }
-          } else {
-            // Handle scoped tokens without explicit registry
-            const scopeMatch = trimmedLine.match(/^@([^:]+):/);
-            const key = scopeMatch ? `@${scopeMatch[1]}` : "default";
-            const config = registryMap.get(key) || { registry: registryMap.get("default")?.registry || "https://registry.npmjs.org" };
-            config.token = token;
-            registryMap.set(key, config);
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Error reading .npmrc:", error);
-    }
-
-    return registryMap;
-  }
-
-  private getRegistryConfigForPackage(packageName: string): NpmConfig {
-    if (packageName.startsWith("@")) {
-      const scope = packageName.split("/")[0];
-      return this.registryMap.get(scope) || this.registryMap.get("default") || { registry: "https://registry.npmjs.org" };
-    }
-    return this.registryMap.get("default") || { registry: "https://registry.npmjs.org" };
-  }
-
   private async lookupNpmDoc(
     packageName: string,
     version?: string,
@@ -564,7 +619,7 @@ help(${packageName})
     query: string,
     language: "go" | "python" | "npm",
     fuzzy: boolean = true
-  ): Promise<{ results: SearchResult[]; totalResults: number }> {
+  ): Promise<SearchResults> {
     try {
       let fullDoc: string;
 
