@@ -241,17 +241,17 @@ class PackageDocsServer {
     const scopeToRegistry = new Map<string, string>();
     const registryToToken = new Map<string, string>();
 
-    console.error("Loading npm configuration...");
-    console.error("Project directory:", projectPath || "not specified");
+    console.debug("Loading npm configuration...")
+    console.debug("Project directory:", projectPath || "not specified");
 
     // First read global .npmrc as base configuration
     const globalNpmrcPath = pathJoin(homedir(), ".npmrc");
-    console.error("Checking global .npmrc at:", globalNpmrcPath);
+    console.debug("Checking global .npmrc at:", globalNpmrcPath);
     if (existsSync(globalNpmrcPath)) {
       try {
-        console.error("Found global .npmrc");
+        console.debug("Found global .npmrc");
         const npmrcContent = readFileSync(globalNpmrcPath, "utf-8");
-        console.error("Global .npmrc content:", npmrcContent);
+        // console.debug("Global .npmrc content:", npmrcContent);
         this.parseNpmrcContent(npmrcContent, scopeToRegistry, registryToToken, registryMap);
       } catch (error) {
         console.error("Error reading global .npmrc:", error);
@@ -274,12 +274,12 @@ class PackageDocsServer {
       // Process paths in reverse order (root to local)
       for (const dir of paths.reverse()) {
         const localNpmrcPath = pathJoin(dir, ".npmrc");
-        console.error("Checking for .npmrc at:", localNpmrcPath);
+        console.debug("Checking for .npmrc at:", localNpmrcPath);
         if (existsSync(localNpmrcPath)) {
           try {
-            console.error("Found .npmrc at:", localNpmrcPath);
+            console.debug("Found .npmrc at:", localNpmrcPath);
             const npmrcContent = readFileSync(localNpmrcPath, "utf-8");
-            console.error("Content:", npmrcContent);
+            // console.debug("Content:", npmrcContent);
             this.parseNpmrcContent(npmrcContent, scopeToRegistry, registryToToken, registryMap);
           } catch (error) {
             console.error(`Error reading local .npmrc at ${localNpmrcPath}:`, error);
@@ -290,13 +290,13 @@ class PackageDocsServer {
 
     try {
       // Associate tokens with registries
-      console.error("Scope to Registry mappings:", Object.fromEntries(scopeToRegistry));
-      console.error("Registry to Token mappings:", Object.fromEntries(registryToToken));
+      // console.debug("Scope to Registry mappings:", Object.fromEntries(scopeToRegistry))
+      // console.debug("Registry to Token mappings:", Object.fromEntries(registryToToken));
 
       for (const [scope, registry] of scopeToRegistry.entries()) {
         const hostname = new URL(registry).host;
         const token = registryToToken.get(hostname);
-        console.error(`Setting config for scope ${scope}:`, { registry, token: token ? "[REDACTED]" : undefined });
+        console.debug(`Setting config for scope ${scope}:`, { registry, token: token ? "[REDACTED]" : undefined });
         registryMap.set(scope, { registry, token });
       }
 
@@ -306,12 +306,12 @@ class PackageDocsServer {
         const hostname = new URL(defaultConfig.registry).host;
         const token = registryToToken.get(hostname);
         if (token) {
-          console.error("Setting token for default registry");
+          console.debug("Setting token for default registry");
           registryMap.set("default", { ...defaultConfig, token });
         }
       }
 
-      console.error("Final registry configurations:",
+      console.debug("Final registry configurations:",
         Object.fromEntries(Array.from(registryMap.entries()).map(([k, v]) => [
           k,
           { registry: v.registry, token: v.token ? "[REDACTED]" : undefined }
@@ -963,7 +963,7 @@ help(${packageName})
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error(
+    console.info(
       "Package Docs MCP server running on stdio, version:",
       packageJson.version,
     );
