@@ -109,10 +109,15 @@ const isNpmDocArgs = (args: unknown): args is NpmDocArgs => {
   );
 };
 
+interface NpmConfig {
+  registry: string;
+  token?: string;
+}
+
 class PackageDocsServer {
   private server: Server;
   private cache: Map<string, DocResult>;
-  private registryMap: Map<string, string>;
+  private registryMap: Map<string, NpmConfig>;
 
   constructor() {
     this.registryMap = this.loadNpmConfig();
@@ -417,9 +422,10 @@ help(${packageName})
     }
   }
 
-  private loadNpmConfig(): Map<string, string> {
-    const registryMap = new Map<string, string>();
-    registryMap.set("default", "https://registry.npmjs.org");
+
+  private loadNpmConfig(): Map<string, NpmConfig> {
+    const registryMap = new Map<string, NpmConfig>();
+    registryMap.set("default", { registry: "https://registry.npmjs.org" });
 
     // Try to read .npmrc from user's home directory
     const npmrcPath = pathJoin(homedir(), ".npmrc");
@@ -435,14 +441,39 @@ help(${packageName})
         const trimmedLine = line.trim();
         if (!trimmedLine || trimmedLine.startsWith("#")) continue;
 
-        // Match registry lines
-        const registryMatch = trimmedLine.match(/^(?:@([^:]+):)?registry=(.+)$/);
-        if (registryMatch) {
+        // Match registry lines (both @scope:registry=url and @scope:url format)
+        const registryMatch = trimmedLine.match(/^(?:@([^:]+):)(?:registry=)?(.+)$/);
+        if (registryMatch && !trimmedLine.includes("_authToken")) {
           const [, scope, registry] = registryMatch;
           const key = scope ? `@${scope}` : "default";
           // Remove trailing slash if present
           const cleanRegistry = registry.replace(/\/$/, "");
-          registryMap.set(key, cleanRegistry);
+          registryMap.set(key, { registry: cleanRegistry });
+        }
+
+        // Match auth token lines (handles both //registry.com/:_authToken and _authToken= formats)
+        const tokenMatch = trimmedLine.match(/^(?:\/\/([^/]+)\/|(?:@[^:]+:))?_authToken=(.+)$/);
+        if (tokenMatch) {
+          const [, registry, token] = tokenMatch;
+          if (registry) {
+            // Convert registry hostname to full URL
+            const registryUrl = `https://${registry}`;
+            // Find the scope that uses this registry
+            for (const [key, config] of registryMap.entries()) {
+              if (config.registry.includes(registry)) {
+                config.token = token;
+                registryMap.set(key, config);
+                break;
+              }
+            }
+          } else {
+            // Handle scoped tokens without explicit registry
+            const scopeMatch = trimmedLine.match(/^@([^:]+):/);
+            const key = scopeMatch ? `@${scopeMatch[1]}` : "default";
+            const config = registryMap.get(key) || { registry: registryMap.get("default")?.registry || "https://registry.npmjs.org" };
+            config.token = token;
+            registryMap.set(key, config);
+          }
         }
       }
     } catch (error) {
@@ -452,24 +483,29 @@ help(${packageName})
     return registryMap;
   }
 
-  private getRegistryForPackage(packageName: string): string {
+  private getRegistryConfigForPackage(packageName: string): NpmConfig {
     if (packageName.startsWith("@")) {
       const scope = packageName.split("/")[0];
-      return this.registryMap.get(scope) || this.registryMap.get("default") || "https://registry.npmjs.org";
+      return this.registryMap.get(scope) || this.registryMap.get("default") || { registry: "https://registry.npmjs.org" };
     }
-    return this.registryMap.get("default") || "https://registry.npmjs.org";
+    return this.registryMap.get("default") || { registry: "https://registry.npmjs.org" };
   }
 
   private async lookupNpmDoc(
     packageName: string,
     version?: string,
   ): Promise<DocResult> {
+    const config = this.getRegistryConfigForPackage(packageName);
     try {
-      const registry = this.getRegistryForPackage(packageName);
-      const packagePath = packageName.replace("/", "%2F");
-      const response = await axios.get(
-        `${registry}/${packagePath}${version ? `/${version}` : ""}`,
-      );
+      const packagePath = encodeURIComponent(packageName);
+      const url = `${config.registry}/${packagePath}${version ? `/${version}` : ""}`;
+
+      const headers: Record<string, string> = {};
+      if (config.token) {
+        headers.Authorization = `Bearer ${config.token}`;
+      }
+
+      const response = await axios.get(url, { headers });
 
       const { description, readme } = response.data;
       const result: DocResult = {
@@ -494,12 +530,31 @@ help(${packageName})
 
       return result;
     } catch (error) {
-      const errorMessage =
-        error instanceof AxiosError
-          ? error.response?.data?.message || error.message
-          : String(error);
+      let errorMessage = "Unknown error occurred";
+      let statusCode: number | undefined;
+
+      if (error instanceof AxiosError) {
+        statusCode = error.response?.status;
+        const responseData = error.response?.data;
+
+        if (statusCode === 404) {
+          errorMessage = `Package '${packageName}' not found. Please check:\n` +
+            `1. The package name is correct\n` +
+            `2. You have access to the package\n` +
+            `3. The registry URL is correct (current: ${config.registry})\n` +
+            `4. Authentication is properly configured in .npmrc`;
+        } else if (statusCode === 401 || statusCode === 403) {
+          errorMessage = `Authentication failed for package '${packageName}'.\n` +
+            `Please ensure your .npmrc contains valid authentication tokens for ${config.registry}`;
+        } else {
+          errorMessage = responseData?.message || error.message;
+        }
+      } else {
+        errorMessage = String(error);
+      }
+
       return {
-        error: `Failed to fetch NPM documentation: ${errorMessage}`,
+        error: `Failed to fetch NPM documentation (${statusCode || 'unknown status'}): ${errorMessage}`,
       };
     }
   }
