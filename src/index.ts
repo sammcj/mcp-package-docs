@@ -50,6 +50,7 @@ interface SearchDocArgs {
   query: string;
   language: "go" | "python" | "npm";
   fuzzy?: boolean;
+  projectPath?: string;
 }
 
 const isSearchDocArgs = (args: unknown): args is SearchDocArgs => {
@@ -60,23 +61,28 @@ const isSearchDocArgs = (args: unknown): args is SearchDocArgs => {
     typeof (args as SearchDocArgs).query === "string" &&
     ["go", "python", "npm"].includes((args as SearchDocArgs).language) &&
     (typeof (args as SearchDocArgs).fuzzy === "boolean" ||
-      (args as SearchDocArgs).fuzzy === undefined)
+      (args as SearchDocArgs).fuzzy === undefined) &&
+    (typeof (args as SearchDocArgs).projectPath === "string" ||
+      (args as SearchDocArgs).projectPath === undefined)
   );
 };
 
 interface GoDocArgs {
   package: string;
   symbol?: string;
+  projectPath?: string;
 }
 
 interface PythonDocArgs {
   package: string;
   symbol?: string;
+  projectPath?: string;
 }
 
 interface NpmDocArgs {
   package: string;
   version?: string;
+  projectPath?: string;
 }
 
 const isGoDocArgs = (args: unknown): args is GoDocArgs => {
@@ -85,7 +91,9 @@ const isGoDocArgs = (args: unknown): args is GoDocArgs => {
     args !== null &&
     typeof (args as GoDocArgs).package === "string" &&
     (typeof (args as GoDocArgs).symbol === "string" ||
-      (args as GoDocArgs).symbol === undefined)
+      (args as GoDocArgs).symbol === undefined) &&
+    (typeof (args as GoDocArgs).projectPath === "string" ||
+      (args as GoDocArgs).projectPath === undefined)
   );
 };
 
@@ -95,7 +103,9 @@ const isPythonDocArgs = (args: unknown): args is PythonDocArgs => {
     args !== null &&
     typeof (args as PythonDocArgs).package === "string" &&
     (typeof (args as PythonDocArgs).symbol === "string" ||
-      (args as PythonDocArgs).symbol === undefined)
+      (args as PythonDocArgs).symbol === undefined) &&
+    (typeof (args as PythonDocArgs).projectPath === "string" ||
+      (args as PythonDocArgs).projectPath === undefined)
   );
 };
 
@@ -105,7 +115,9 @@ const isNpmDocArgs = (args: unknown): args is NpmDocArgs => {
     args !== null &&
     typeof (args as NpmDocArgs).package === "string" &&
     (typeof (args as NpmDocArgs).version === "string" ||
-      (args as NpmDocArgs).version === undefined)
+      (args as NpmDocArgs).version === undefined) &&
+    (typeof (args as NpmDocArgs).projectPath === "string" ||
+      (args as NpmDocArgs).projectPath === undefined)
   );
 };
 
@@ -181,65 +193,110 @@ class PackageDocsServer {
         const [, registry, scope, token] = tokenMatch;
         if (registry) {
           // Store token for specific registry
+          // Handle both protocol and non-protocol URLs
           registryToToken.set(registry, token);
+          if (!registry.includes("://")) {
+            registryToToken.set(`https://${registry}`, token);
+            registryToToken.set(`http://${registry}`, token);
+          }
         } else if (scope) {
           // Store token for scope, we'll resolve the registry later
           const scopeRegistry = scopeToRegistry.get(`@${scope}`);
           if (scopeRegistry) {
-            const hostname = new URL(scopeRegistry).host;
-            registryToToken.set(hostname, token);
+            try {
+              // Try parsing as URL first
+              const url = new URL(scopeRegistry);
+              registryToToken.set(url.host, token);
+            } catch {
+              // If not a URL, treat as hostname
+              registryToToken.set(scopeRegistry, token);
+              registryToToken.set(`https://${scopeRegistry}`, token);
+              registryToToken.set(`http://${scopeRegistry}`, token);
+            }
           }
         } else {
           // Default token
           const defaultRegistry = registryMap.get("default")?.registry;
           if (defaultRegistry) {
-            const hostname = new URL(defaultRegistry).host;
-            registryToToken.set(hostname, token);
+            try {
+              // Try parsing as URL first
+              const url = new URL(defaultRegistry);
+              registryToToken.set(url.host, token);
+            } catch {
+              // If not a URL, treat as hostname
+              registryToToken.set(defaultRegistry, token);
+              registryToToken.set(`https://${defaultRegistry}`, token);
+              registryToToken.set(`http://${defaultRegistry}`, token);
+            }
           }
         }
       }
     }
   }
 
-  private loadNpmConfig(): Map<string, NpmConfig> {
+  private loadNpmConfig(projectPath?: string): Map<string, NpmConfig> {
     const registryMap = new Map<string, NpmConfig>();
     registryMap.set("default", { registry: "https://registry.npmjs.org" });
 
     const scopeToRegistry = new Map<string, string>();
     const registryToToken = new Map<string, string>();
 
-    // Try to read .npmrc from current directory and parent directories
-    let currentDir = process.cwd();
-    const root = dirname(currentDir);
-    while (currentDir !== root) {
-      const localNpmrcPath = pathJoin(currentDir, ".npmrc");
-      if (existsSync(localNpmrcPath)) {
-        try {
-          const npmrcContent = readFileSync(localNpmrcPath, "utf-8");
-          this.parseNpmrcContent(npmrcContent, scopeToRegistry, registryToToken, registryMap);
-        } catch (error) {
-          console.error(`Error reading local .npmrc at ${localNpmrcPath}:`, error);
-        }
-      }
-      currentDir = dirname(currentDir);
-    }
+    console.error("Loading npm configuration...");
+    console.error("Project directory:", projectPath || "not specified");
 
-    // Try to read .npmrc from user's home directory (global config)
+    // First read global .npmrc as base configuration
     const globalNpmrcPath = pathJoin(homedir(), ".npmrc");
+    console.error("Checking global .npmrc at:", globalNpmrcPath);
     if (existsSync(globalNpmrcPath)) {
       try {
+        console.error("Found global .npmrc");
         const npmrcContent = readFileSync(globalNpmrcPath, "utf-8");
+        console.error("Global .npmrc content:", npmrcContent);
         this.parseNpmrcContent(npmrcContent, scopeToRegistry, registryToToken, registryMap);
       } catch (error) {
         console.error("Error reading global .npmrc:", error);
       }
     }
 
+    // Then read from root to project directory, so local configs take precedence
+    if (projectPath) {
+      const paths: string[] = [];
+      let currentDir = projectPath;
+      const root = dirname(currentDir);
+
+      // Collect all paths first
+      while (currentDir !== root) {
+        paths.push(currentDir);
+        currentDir = dirname(currentDir);
+      }
+      paths.push(root);
+
+      // Process paths in reverse order (root to local)
+      for (const dir of paths.reverse()) {
+        const localNpmrcPath = pathJoin(dir, ".npmrc");
+        console.error("Checking for .npmrc at:", localNpmrcPath);
+        if (existsSync(localNpmrcPath)) {
+          try {
+            console.error("Found .npmrc at:", localNpmrcPath);
+            const npmrcContent = readFileSync(localNpmrcPath, "utf-8");
+            console.error("Content:", npmrcContent);
+            this.parseNpmrcContent(npmrcContent, scopeToRegistry, registryToToken, registryMap);
+          } catch (error) {
+            console.error(`Error reading local .npmrc at ${localNpmrcPath}:`, error);
+          }
+        }
+      }
+    }
+
     try {
       // Associate tokens with registries
+      console.error("Scope to Registry mappings:", Object.fromEntries(scopeToRegistry));
+      console.error("Registry to Token mappings:", Object.fromEntries(registryToToken));
+
       for (const [scope, registry] of scopeToRegistry.entries()) {
         const hostname = new URL(registry).host;
         const token = registryToToken.get(hostname);
+        console.error(`Setting config for scope ${scope}:`, { registry, token: token ? "[REDACTED]" : undefined });
         registryMap.set(scope, { registry, token });
       }
 
@@ -249,9 +306,17 @@ class PackageDocsServer {
         const hostname = new URL(defaultConfig.registry).host;
         const token = registryToToken.get(hostname);
         if (token) {
+          console.error("Setting token for default registry");
           registryMap.set("default", { ...defaultConfig, token });
         }
       }
+
+      console.error("Final registry configurations:",
+        Object.fromEntries(Array.from(registryMap.entries()).map(([k, v]) => [
+          k,
+          { registry: v.registry, token: v.token ? "[REDACTED]" : undefined }
+        ]))
+      );
     } catch (error) {
       console.error("Error processing .npmrc configurations:", error);
     }
@@ -259,7 +324,12 @@ class PackageDocsServer {
     return registryMap;
   }
 
-  private getRegistryConfigForPackage(packageName: string): NpmConfig {
+  private getRegistryConfigForPackage(packageName: string, projectPath?: string): NpmConfig {
+    // Load fresh config if project path is provided
+    if (projectPath) {
+      this.registryMap = this.loadNpmConfig(projectPath);
+    }
+
     if (packageName.startsWith("@")) {
       const scope = packageName.split("/")[0];
       return this.registryMap.get(scope) || this.registryMap.get("default") || { registry: "https://registry.npmjs.org" };
@@ -293,6 +363,10 @@ class PackageDocsServer {
                 type: "boolean",
                 description: "Enable fuzzy matching",
                 default: true
+              },
+              projectPath: {
+                type: "string",
+                description: "Optional path to project directory for local .npmrc files"
               }
             },
             required: ["package", "query", "language"]
@@ -313,6 +387,10 @@ class PackageDocsServer {
                 description:
                   "Optional symbol name to look up specific documentation",
               },
+              projectPath: {
+                type: "string",
+                description: "Optional path to project directory for local .npmrc files"
+              }
             },
             required: ["package"],
           },
@@ -332,6 +410,10 @@ class PackageDocsServer {
                 description:
                   "Optional symbol name to look up specific documentation",
               },
+              projectPath: {
+                type: "string",
+                description: "Optional path to project directory for local .npmrc files"
+              }
             },
             required: ["package"],
           },
@@ -350,6 +432,10 @@ class PackageDocsServer {
                 type: "string",
                 description: "Optional package version",
               },
+              projectPath: {
+                type: "string",
+                description: "Optional path to project directory for local .npmrc files"
+              }
             },
             required: ["package"],
           },
@@ -387,7 +473,8 @@ class PackageDocsServer {
               request.params.arguments.package,
               request.params.arguments.query,
               request.params.arguments.language,
-              request.params.arguments.fuzzy
+              request.params.arguments.fuzzy,
+              request.params.arguments.projectPath
             )
           };
           break;
@@ -401,6 +488,7 @@ class PackageDocsServer {
           result = await this.lookupGoDoc(
             request.params.arguments.package,
             request.params.arguments.symbol,
+            request.params.arguments.projectPath
           );
           break;
         case "lookup_python_doc":
@@ -413,6 +501,7 @@ class PackageDocsServer {
           result = await this.lookupPythonDoc(
             request.params.arguments.package,
             request.params.arguments.symbol,
+            request.params.arguments.projectPath
           );
           break;
         case "lookup_npm_doc":
@@ -425,6 +514,7 @@ class PackageDocsServer {
           result = await this.lookupNpmDoc(
             request.params.arguments.package,
             request.params.arguments.version,
+            request.params.arguments.projectPath
           );
           break;
         default:
@@ -444,6 +534,7 @@ class PackageDocsServer {
   private async lookupGoDoc(
     packageName: string,
     symbol?: string,
+    projectPath?: string
   ): Promise<DocResult> {
     try {
       const cmd = symbol
@@ -493,6 +584,7 @@ class PackageDocsServer {
   private async lookupPythonDoc(
     packageName: string,
     symbol?: string,
+    projectPath?: string
   ): Promise<DocResult> {
     try {
       const pythonCode = symbol
@@ -549,8 +641,9 @@ help(${packageName})
   private async lookupNpmDoc(
     packageName: string,
     version?: string,
+    projectPath?: string
   ): Promise<DocResult> {
-    const config = this.getRegistryConfigForPackage(packageName);
+    const config = this.getRegistryConfigForPackage(packageName, projectPath);
     try {
       const packagePath = encodeURIComponent(packageName);
       const url = `${config.registry}/${packagePath}${version ? `/${version}` : ""}`;
@@ -618,7 +711,8 @@ help(${packageName})
     packageName: string,
     query: string,
     language: "go" | "python" | "npm",
-    fuzzy: boolean = true
+    fuzzy: boolean = true,
+    projectPath?: string
   ): Promise<SearchResults> {
     try {
       let fullDoc: string;
@@ -638,7 +732,7 @@ help(${packageName})
           fullDoc = pythonDoc;
           break;
         case "npm":
-          const config = this.getRegistryConfigForPackage(packageName);
+          const config = this.getRegistryConfigForPackage(packageName, projectPath);
           const packagePath = encodeURIComponent(packageName);
           const url = `${config.registry}/${packagePath}`;
 
