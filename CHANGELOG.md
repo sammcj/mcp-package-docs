@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.14](https://github.com/sammcj/mcp-package-docs/compare/v0.1.13...v0.1.14) (2025-02-24)
+
+
+### Features
+
+* **npm:** support private npm repos ([8ae7d30](https://github.com/sammcj/mcp-package-docs/commit/8ae7d30d332ba7ebf119ac8e4486051bdef70fd5))
+
 ### [0.1.13](https://github.com/sammcj/mcp-package-docs/compare/v0.1.12...v0.1.13) (2025-02-24)
 
 
