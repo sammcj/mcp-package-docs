@@ -715,13 +715,13 @@ help(${packageName})
     projectPath?: string
   ): Promise<SearchResults> {
     try {
-      let fullDoc: string;
+      let docSections: Array<{ content: string; type: string }> = [];
 
-      // Get full documentation based on language
+      // Get and parse documentation based on language
       switch (language) {
         case "go":
           const { stdout: goDoc } = await execAsync(`go doc -all ${packageName}`);
-          fullDoc = goDoc;
+          docSections = this.parseGoDoc(goDoc);
           break;
         case "python":
           const pythonCode = `
@@ -729,7 +729,7 @@ import ${packageName}
 help(${packageName})
 `;
           const { stdout: pythonDoc } = await execAsync(`python3 -c "${pythonCode}"`);
-          fullDoc = pythonDoc;
+          docSections = this.parsePythonDoc(pythonDoc);
           break;
         case "npm":
           const config = this.getRegistryConfigForPackage(packageName, projectPath);
@@ -742,46 +742,82 @@ help(${packageName})
           }
 
           const response = await axios.get(url, { headers });
-          fullDoc = response.data.readme || "";
+          docSections = this.parseNpmDoc(response.data);
           break;
         default:
           throw new Error(`Unsupported language: ${language}`);
       }
 
-      // Split documentation into sections for better context
-      const sections = fullDoc.split(/\n\n+/);
+      if (docSections.length === 0) {
+        return {
+          results: [],
+          totalResults: 0
+        };
+      }
 
       if (fuzzy) {
-        // Use Fuse.js for fuzzy searching
-        const fuse = new Fuse(sections, {
+        // Use Fuse.js for fuzzy searching with more lenient threshold
+        const fuse = new Fuse(docSections, {
           includeScore: true,
-          threshold: 0.4,
-          minMatchCharLength: 3
+          threshold: 0.3, // Lower threshold to catch more matches
+          minMatchCharLength: 2,
+          keys: ['content'],
+          ignoreLocation: true
         });
 
         const searchResults = fuse.search(query);
 
         return {
-          results: searchResults.map(result => ({
-            match: result.item.substring(0, 150),
-            context: result.item,
-            score: 1 - (result.score || 0),
-            symbol: this.extractSymbol(result.item, language)
-          })),
+          results: searchResults.map(result => {
+            const section = result.item;
+            const matchStart = section.content.toLowerCase().indexOf(query.toLowerCase());
+            let match = section.content;
+
+            // Extract a window of text around the match
+            if (matchStart !== -1) {
+              const start = Math.max(0, matchStart - 50);
+              const end = Math.min(section.content.length, matchStart + query.length + 100);
+              match = (start > 0 ? '...' : '') +
+                     section.content.slice(start, end) +
+                     (end < section.content.length ? '...' : '');
+            }
+
+            return {
+              match,
+              context: section.content,
+              score: 1 - (result.score || 0),
+              symbol: this.extractSymbol(section.content, language),
+              type: section.type
+            };
+          }),
           totalResults: searchResults.length
         };
       } else {
-        // Use regular expression for exact matching
-        const regex = new RegExp(query, "gi");
-        const matches = sections.filter(section => regex.test(section));
+        // Use regular expression for exact matching with word boundaries
+        const regex = new RegExp(`\\b${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, "gi");
+        const matches = docSections.filter(section => regex.test(section.content));
 
         return {
-          results: matches.map(match => ({
-            match: match.substring(0, 150),
-            context: match,
-            score: 1,
-            symbol: this.extractSymbol(match, language)
-          })),
+          results: matches.map(section => {
+            const matchStart = section.content.toLowerCase().indexOf(query.toLowerCase());
+            let match = section.content;
+
+            if (matchStart !== -1) {
+              const start = Math.max(0, matchStart - 50);
+              const end = Math.min(section.content.length, matchStart + query.length + 100);
+              match = (start > 0 ? '...' : '') +
+                     section.content.slice(start, end) +
+                     (end < section.content.length ? '...' : '');
+            }
+
+            return {
+              match,
+              context: section.content,
+              score: 1,
+              symbol: this.extractSymbol(section.content, language),
+              type: section.type
+            };
+          }),
           totalResults: matches.length
         };
       }
@@ -791,6 +827,119 @@ help(${packageName})
         `Failed to search documentation: ${error instanceof Error ? error.message : String(error)}`
       );
     }
+  }
+
+  private parseGoDoc(doc: string): Array<{ content: string; type: string }> {
+    const sections: Array<{ content: string; type: string }> = [];
+    let currentSection = '';
+    let currentType = 'description';
+
+    const lines = doc.split('\n');
+    for (const line of lines) {
+      if (line.startsWith('func ')) {
+        if (currentSection) {
+          sections.push({ content: currentSection.trim(), type: currentType });
+        }
+        currentSection = line;
+        currentType = 'function';
+      } else if (line.startsWith('type ')) {
+        if (currentSection) {
+          sections.push({ content: currentSection.trim(), type: currentType });
+        }
+        currentSection = line;
+        currentType = 'type';
+      } else if (line.startsWith('var ') || line.startsWith('const ')) {
+        if (currentSection) {
+          sections.push({ content: currentSection.trim(), type: currentType });
+        }
+        currentSection = line;
+        currentType = 'variable';
+      } else {
+        currentSection += '\n' + line;
+      }
+    }
+
+    if (currentSection) {
+      sections.push({ content: currentSection.trim(), type: currentType });
+    }
+
+    return sections;
+  }
+
+  private parsePythonDoc(doc: string): Array<{ content: string; type: string }> {
+    const sections: Array<{ content: string; type: string }> = [];
+    let currentSection = '';
+    let currentType = 'description';
+
+    const lines = doc.split('\n');
+    for (const line of lines) {
+      if (line.startsWith('class ')) {
+        if (currentSection) {
+          sections.push({ content: currentSection.trim(), type: currentType });
+        }
+        currentSection = line;
+        currentType = 'class';
+      } else if (line.startsWith('def ')) {
+        if (currentSection) {
+          sections.push({ content: currentSection.trim(), type: currentType });
+        }
+        currentSection = line;
+        currentType = 'function';
+      } else if (line.match(/^[A-Z_]+\s*=/)) {
+        if (currentSection) {
+          sections.push({ content: currentSection.trim(), type: currentType });
+        }
+        currentSection = line;
+        currentType = 'constant';
+      } else {
+        currentSection += '\n' + line;
+      }
+    }
+
+    if (currentSection) {
+      sections.push({ content: currentSection.trim(), type: currentType });
+    }
+
+    return sections;
+  }
+
+  private parseNpmDoc(data: any): Array<{ content: string; type: string }> {
+    const sections: Array<{ content: string; type: string }> = [];
+
+    // Add package description
+    if (data.description) {
+      sections.push({
+        content: data.description,
+        type: 'description'
+      });
+    }
+
+    // Parse README into sections
+    if (data.readme) {
+      const readmeSections = data.readme.split(/(?=^#+ )/m);
+      for (const section of readmeSections) {
+        const lines = section.split('\n');
+        const heading = lines[0];
+        const content = lines.slice(1).join('\n').trim();
+
+        if (content) {
+          let type = 'general';
+          const lowerHeading = heading.toLowerCase();
+
+          if (lowerHeading.includes('install')) type = 'installation';
+          else if (lowerHeading.includes('usage') || lowerHeading.includes('api')) type = 'usage';
+          else if (lowerHeading.includes('example')) type = 'example';
+          else if (lowerHeading.includes('config')) type = 'configuration';
+
+          sections.push({
+            content: `${heading}\n${content}`,
+            type
+          });
+        }
+      }
+    }
+
+    return sections;
   }
 
   private extractSymbol(text: string, language: string): string | undefined {
@@ -803,8 +952,9 @@ help(${packageName})
         const pyMatch = firstLine.match(/^(class|def)\s+(\w+)/);
         return pyMatch?.[2];
       case "npm":
-        const npmMatch = firstLine.match(/^#+\s*(`.*`|\w+)/);
-        return npmMatch?.[1]?.replace(/`/g, '');
+        // Extract symbol from markdown headings or code blocks
+        const npmMatch = firstLine.match(/^#+\s*(?:`([^`]+)`|(\w+))/);
+        return npmMatch?.[1] || npmMatch?.[2];
       default:
         return undefined;
     }
