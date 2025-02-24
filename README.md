@@ -1,4 +1,5 @@
 # Package Documentation MCP Server
+
 [![smithery badge](https://smithery.ai/badge/mcp-package-docs)](https://smithery.ai/server/mcp-package-docs)
 
 An MCP (Model Context Protocol) server that provides LLMs with efficient access to package documentation across multiple programming languages.
@@ -10,7 +11,7 @@ An MCP (Model Context Protocol) server that provides LLMs with efficient access 
 - **Multi-Language Support**:
   - Go packages via `go doc`
   - Python libraries via built-in `help()`
-  - NPM packages via registry documentation
+  - NPM packages via registry documentation (including private registries)
 
 - **Smart Documentation Parsing**:
   - Structured output with description, usage, and examples
@@ -31,17 +32,16 @@ An MCP (Model Context Protocol) server that provides LLMs with efficient access 
 
 ## Installation
 
+```bash
+npx -y mcp-package-docs
+```
+
 ### Installing via Smithery
 
 To install Package Docs for Claude Desktop automatically via [Smithery](https://smithery.ai/server/mcp-package-docs):
 
 ```bash
 npx -y @smithery/cli install mcp-package-docs --client claude
-```
-
-### Manual Installation
-```bash
-npx -y mcp-package-docs
 ```
 
 ## Usage
@@ -106,15 +106,30 @@ Search within package documentation
 
 #### lookup_npm_doc
 
-Fetches NPM package documentation
+Fetches NPM package documentation from both public and private registries. Automatically uses the appropriate registry based on your .npmrc configuration.
+
 ```typescript
 {
   "name": "lookup_npm_doc",
   "arguments": {
-    "package": "axios",      // required
+    "package": "axios",      // required - supports both scoped (@org/pkg) and unscoped packages
     "version": "1.6.0"       // optional
   }
 }
+```
+
+The tool reads your ~/.npmrc file to determine the correct registry for each package:
+
+- Uses scoped registry configurations (e.g., @mycompany:registry=...)
+- Supports private registries (GitHub Packages, GitLab, Nexus, Artifactory, etc.)
+- Falls back to the default npm registry if no custom registry is configured
+
+Example .npmrc configurations:
+
+```npmrc
+registry=https://nexus.mycompany.com/repository/npm-group/
+@mycompany:registry=https://nexus.mycompany.com/repository/npm-private/
+@mycompany-ct:registry=https://npm.pkg.github.com/
 ```
 
 ### Example Usage in an LLM
