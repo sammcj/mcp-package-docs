@@ -48,16 +48,16 @@
   },
   "homepage": "https://github.com/sammcj/mcp-package-docs#readme",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.4.1",
+    "@modelcontextprotocol/sdk": "^1.5.0",
     "axios": "^1.7.9",
     "fuse.js": "7.1.0"
   },
   "devDependencies": {
-    "@types/node": "^22.13.0",
-    "@typescript-eslint/eslint-plugin": "8.22.0",
-    "@typescript-eslint/parser": "8.22.0",
-    "eslint": "^9.19.0",
-    "prettier": "^3.4.2",
+    "@types/node": "^22.13.5",
+    "@typescript-eslint/eslint-plugin": "8.24.1",
+    "@typescript-eslint/parser": "8.24.1",
+    "eslint": "^9.21.0",
+    "prettier": "^3.5.2",
     "typescript": "^5.7.3"
   },
   "engines": {

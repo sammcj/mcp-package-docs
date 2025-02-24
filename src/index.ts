@@ -12,8 +12,10 @@ import { promisify } from "util";
 import axios, { AxiosError } from "axios";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import Fuse from "fuse.js";
+import { homedir } from "os";
+import { join as pathJoin } from "path";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -110,8 +112,10 @@ const isNpmDocArgs = (args: unknown): args is NpmDocArgs => {
 class PackageDocsServer {
   private server: Server;
   private cache: Map<string, DocResult>;
+  private registryMap: Map<string, string>;
 
   constructor() {
+    this.registryMap = this.loadNpmConfig();
     this.server = new Server(
       {
         name: "mcp-package-docs",
@@ -413,14 +417,58 @@ help(${packageName})
     }
   }
 
+  private loadNpmConfig(): Map<string, string> {
+    const registryMap = new Map<string, string>();
+    registryMap.set("default", "https://registry.npmjs.org");
+
+    // Try to read .npmrc from user's home directory
+    const npmrcPath = pathJoin(homedir(), ".npmrc");
+    if (!existsSync(npmrcPath)) {
+      return registryMap;
+    }
+
+    try {
+      const npmrcContent = readFileSync(npmrcPath, "utf-8");
+      const lines = npmrcContent.split("\n");
+
+      for (const line of lines) {
+        const trimmedLine = line.trim();
+        if (!trimmedLine || trimmedLine.startsWith("#")) continue;
+
+        // Match registry lines
+        const registryMatch = trimmedLine.match(/^(?:@([^:]+):)?registry=(.+)$/);
+        if (registryMatch) {
+          const [, scope, registry] = registryMatch;
+          const key = scope ? `@${scope}` : "default";
+          // Remove trailing slash if present
+          const cleanRegistry = registry.replace(/\/$/, "");
+          registryMap.set(key, cleanRegistry);
+        }
+      }
+    } catch (error) {
+      console.error("Error reading .npmrc:", error);
+    }
+
+    return registryMap;
+  }
+
+  private getRegistryForPackage(packageName: string): string {
+    if (packageName.startsWith("@")) {
+      const scope = packageName.split("/")[0];
+      return this.registryMap.get(scope) || this.registryMap.get("default") || "https://registry.npmjs.org";
+    }
+    return this.registryMap.get("default") || "https://registry.npmjs.org";
+  }
+
   private async lookupNpmDoc(
     packageName: string,
     version?: string,
   ): Promise<DocResult> {
     try {
-      // Fetch package info from npm registry
+      const registry = this.getRegistryForPackage(packageName);
+      const packagePath = packageName.replace("/", "%2F");
       const response = await axios.get(
-        `https://registry.npmjs.org/${packageName}${version ? `/${version}` : ""}`,
+        `${registry}/${packagePath}${version ? `/${version}` : ""}`,
       );
 
       const { description, readme } = response.data;
