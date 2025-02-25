@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.15](https://github.com/sammcj/mcp-package-docs/compare/v0.1.14...v0.1.15) (2025-02-25)
+
+
+### Features
+
+* local docs ([ef80531](https://github.com/sammcj/mcp-package-docs/commit/ef805319774583032d9fe08648ba6697c5766d03))
+
 ### [0.1.14](https://github.com/sammcj/mcp-package-docs/compare/v0.1.13...v0.1.14) (2025-02-24)
 
 
