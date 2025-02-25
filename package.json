@@ -1,6 +1,6 @@
 {
   "name": "mcp-package-docs",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "An MCP server that provides LLMs with efficient access to package documentation across multiple programming languages",
   "main": "build/index.js",
   "type": "module",
