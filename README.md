@@ -1,8 +1,9 @@
 # Package Documentation MCP Server
 
-[![smithery badge](https://smithery.ai/badge/mcp-package-docs)](https://smithery.ai/server/mcp-package-docs)
 
 An MCP (Model Context Protocol) server that provides LLMs with efficient access to package documentation across multiple programming languages.
+
+[![smithery badge](https://smithery.ai/badge/mcp-package-docs)](https://smithery.ai/server/mcp-package-docs)
 
 <a href="https://glama.ai/mcp/servers/mrk7ul7nz7"><img width="380" height="200" src="https://glama.ai/mcp/servers/mrk7ul7nz7/badge" alt="Package Docs Server MCP server" /></a>
 

@@ -31,11 +31,14 @@ interface DocResult {
   example?: string;
   error?: string;
   searchResults?: SearchResults;
+  suggestInstall?: boolean; // Flag to indicate if we should suggest package installation
 }
 
 interface SearchResults {
   results: SearchResult[];
   totalResults: number;
+  error?: string;
+  suggestInstall?: boolean;
 }
 
 interface SearchResult {
@@ -337,6 +340,224 @@ class PackageDocsServer {
     return this.registryMap.get("default") || { registry: "https://registry.npmjs.org" };
   }
 
+  /**
+   * Check if a Go package is installed locally
+   */
+  private async isGoPackageInstalledLocally(packageName: string, projectPath?: string): Promise<boolean> {
+    try {
+      // Check if the project has a go.mod file
+      const goModPath = projectPath ? join(projectPath, "go.mod") : "go.mod"
+      if (existsSync(goModPath)) {
+        const goMod = readFileSync(goModPath, "utf-8")
+        // Simple check if the package is mentioned in go.mod
+        if (goMod.includes(packageName)) {
+          return true
+        }
+      }
+
+      // Try to find the package in GOPATH
+      const { stdout } = await execAsync(`go list -f '{{.Dir}}' ${packageName}`)
+      return !!stdout.trim()
+    } catch (error) {
+      // If the command fails, the package is likely not installed
+      return false
+    }
+  }
+
+  /**
+   * Check if a Python package is installed locally
+   */
+  private async isPythonPackageInstalledLocally(packageName: string, projectPath?: string): Promise<boolean> {
+    try {
+      // Check if we can import the package
+      const pythonCode = `
+import importlib.util
+import sys
+spec = importlib.util.find_spec('${packageName}')
+print(spec is not None)
+`
+      const { stdout } = await execAsync(`python3 -c "${pythonCode}"`)
+      return stdout.trim() === "True"
+    } catch (error) {
+      return false
+    }
+  }
+
+  /**
+   * Check if an NPM package is installed locally
+   */
+  private isNpmPackageInstalledLocally(packageName: string, projectPath?: string): boolean {
+    try {
+      // Check in the project's node_modules directory
+      const basePath = projectPath || process.cwd()
+      const packageJsonPath = join(basePath, "node_modules", packageName, "package.json")
+
+      return existsSync(packageJsonPath)
+    } catch (error) {
+      return false
+    }
+  }
+
+  /**
+   * Get documentation from a locally installed Go package
+   */
+  private async getLocalGoDoc(packageName: string, symbol?: string, projectPath?: string): Promise<DocResult> {
+    try {
+      const cmd = symbol
+        ? `go doc ${packageName}.${symbol}`
+        : `go doc ${packageName}`
+      const { stdout } = await execAsync(cmd)
+
+      // Parse the go doc output into a structured format
+      const lines = stdout.split("\n")
+      const result: DocResult = {}
+
+      let section: "description" | "usage" | "example" = "description"
+      let content: string[] = []
+
+      for (const line of lines) {
+        if (line.startsWith("func") || line.startsWith("type")) {
+          if (content.length > 0) {
+            result[section] = content.join("\n").trim()
+          }
+          section = "usage"
+          content = [line]
+        } else if (line.includes("Example")) {
+          if (content.length > 0) {
+            result[section] = content.join("\n").trim()
+          }
+          section = "example"
+          content = []
+        } else {
+          content.push(line)
+        }
+      }
+
+      if (content.length > 0) {
+        result[section] = content.join("\n").trim()
+      }
+
+      return result
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      return {
+        error: `Failed to fetch local Go documentation: ${errorMessage}`,
+      }
+    }
+  }
+
+  /**
+   * Get documentation from a locally installed Python package
+   */
+  private async getLocalPythonDoc(packageName: string, symbol?: string, projectPath?: string): Promise<DocResult> {
+    try {
+      const pythonCode = symbol
+        ? `
+import ${packageName}
+help(${packageName}.${symbol})
+`
+        : `
+import ${packageName}
+help(${packageName})
+`
+
+      const { stdout } = await execAsync(`python3 -c "${pythonCode}"`)
+
+      // Parse the Python help output into a structured format
+      const lines = stdout.split("\n")
+      const result: DocResult = {}
+
+      let section: "description" | "usage" | "example" = "description"
+      let content: string[] = []
+
+      for (const line of lines) {
+        if (line.startsWith("class") || line.startsWith("def")) {
+          if (content.length > 0) {
+            result[section] = content.join("\n").trim()
+          }
+          section = "usage"
+          content = [line]
+        } else if (line.includes("Examples:") || line.includes("Example:")) {
+          if (content.length > 0) {
+            result[section] = content.join("\n").trim()
+          }
+          section = "example"
+          content = []
+        } else {
+          content.push(line)
+        }
+      }
+
+      if (content.length > 0) {
+        result[section] = content.join("\n").trim()
+      }
+
+      return result
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      return {
+        error: `Failed to fetch local Python documentation: ${errorMessage}`,
+      }
+    }
+  }
+
+  /**
+   * Get documentation from a locally installed NPM package
+   */
+  private getLocalNpmDoc(packageName: string, projectPath?: string): DocResult {
+    try {
+      const basePath = projectPath || process.cwd()
+      const packagePath = join(basePath, "node_modules", packageName)
+      const packageJsonPath = join(packagePath, "package.json")
+      const readmePaths = [
+        join(packagePath, "README.md"),
+        join(packagePath, "readme.md"),
+        join(packagePath, "Readme.md"),
+        join(packagePath, "README.markdown"),
+        join(packagePath, "README")
+      ]
+
+      // Read package.json for basic info
+      const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"))
+      const result: DocResult = {
+        description: packageJson.description || "No description available"
+      }
+
+      // Try to find and read README
+      for (const readmePath of readmePaths) {
+        if (existsSync(readmePath)) {
+          const readme = readFileSync(readmePath, "utf-8")
+
+          // Extract usage and examples from README
+          const sections = readme.split(/#+\s/)
+          for (const section of sections) {
+            const lower = section.toLowerCase()
+            if (
+              lower.startsWith("usage") ||
+              lower.startsWith("getting started")
+            ) {
+              result.usage = section.split("\n").slice(1).join("\n").trim()
+            } else if (lower.startsWith("example")) {
+              result.example = section.split("\n").slice(1).join("\n").trim()
+            }
+          }
+
+          break
+        }
+      }
+
+      return result
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      return {
+        error: `Failed to fetch local NPM documentation: ${errorMessage}`,
+      }
+    }
+  }
+
   private setupToolHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
@@ -524,10 +745,54 @@ class PackageDocsServer {
           );
       }
 
-      this.cache.set(cacheKey, result);
-      return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-      };
+      // Check if we need to suggest package installation
+      if (result.suggestInstall || (result.searchResults?.suggestInstall)) {
+        const packageName =
+          request.params.name === "search_package_docs" ?
+            (request.params.arguments as SearchDocArgs).package :
+          request.params.name === "lookup_go_doc" ?
+            (request.params.arguments as GoDocArgs).package :
+          request.params.name === "lookup_python_doc" ?
+            (request.params.arguments as PythonDocArgs).package :
+          request.params.name === "lookup_npm_doc" ?
+            (request.params.arguments as NpmDocArgs).package :
+          "unknown";
+
+        const language =
+          request.params.name === "search_package_docs" ?
+            (request.params.arguments as SearchDocArgs).language :
+          request.params.name === "lookup_go_doc" ?
+            "go" :
+          request.params.name === "lookup_python_doc" ?
+            "python" :
+          request.params.name === "lookup_npm_doc" ?
+            "npm" :
+          "unknown";
+
+        // Add installation instructions to the error message
+        const installCommand =
+          language === "go" ? `go get ${packageName}` :
+          language === "python" ? `pip install ${packageName}` :
+          language === "npm" ? `npm install ${packageName}` :
+          "unknown";
+
+        const installMessage = `Package '${packageName}' is not installed. Would you like to install it using '${installCommand}'?`;
+
+        // Return the result with the installation suggestion
+        this.cache.set(cacheKey, result);
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(result, null, 2) },
+            { type: "text", text: installMessage }
+          ],
+        };
+      } else {
+        // Normal response without installation suggestion
+        this.cache.set(cacheKey, result);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+      }
     });
   }
 
@@ -573,11 +838,32 @@ class PackageDocsServer {
 
       return result;
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      return {
-        error: `Failed to fetch Go documentation: ${errorMessage}`,
-      };
+      // Remote documentation fetch failed, check if package is installed locally
+      console.debug(`Remote Go documentation fetch failed for ${packageName}: ${error}`);
+
+      try {
+        // Check if the package is installed locally
+        const isInstalled = await this.isGoPackageInstalledLocally(packageName, projectPath);
+
+        if (isInstalled) {
+          console.debug(`Package ${packageName} is installed locally, fetching local documentation`);
+          return await this.getLocalGoDoc(packageName, symbol, projectPath);
+        } else {
+          console.debug(`Package ${packageName} is not installed locally`);
+          // Package is not installed locally, suggest installation
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return {
+            error: `Failed to fetch Go documentation: ${errorMessage}`,
+            suggestInstall: true
+          };
+        }
+      } catch (localError) {
+        // Both remote and local attempts failed
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          error: `Failed to fetch Go documentation: ${errorMessage}`,
+        };
+      }
     }
   }
 
@@ -630,11 +916,32 @@ help(${packageName})
 
       return result;
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      return {
-        error: `Failed to fetch Python documentation: ${errorMessage}`,
-      };
+      // Remote documentation fetch failed, check if package is installed locally
+      console.debug(`Remote Python documentation fetch failed for ${packageName}: ${error}`);
+
+      try {
+        // Check if the package is installed locally
+        const isInstalled = await this.isPythonPackageInstalledLocally(packageName, projectPath);
+
+        if (isInstalled) {
+          console.debug(`Package ${packageName} is installed locally, fetching local documentation`);
+          return await this.getLocalPythonDoc(packageName, symbol, projectPath);
+        } else {
+          console.debug(`Package ${packageName} is not installed locally`);
+          // Package is not installed locally, suggest installation
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return {
+            error: `Failed to fetch Python documentation: ${errorMessage}`,
+            suggestInstall: true
+          };
+        }
+      } catch (localError) {
+        // Both remote and local attempts failed
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          error: `Failed to fetch Python documentation: ${errorMessage}`,
+        };
+      }
     }
   }
 
@@ -678,6 +985,9 @@ help(${packageName})
 
       return result;
     } catch (error) {
+      // Remote documentation fetch failed, check if package is installed locally
+      console.debug(`Remote NPM documentation fetch failed for ${packageName}: ${error}`);
+
       let errorMessage = "Unknown error occurred";
       let statusCode: number | undefined;
 
@@ -701,9 +1011,27 @@ help(${packageName})
         errorMessage = String(error);
       }
 
-      return {
-        error: `Failed to fetch NPM documentation (${statusCode || 'unknown status'}): ${errorMessage}`,
-      };
+      try {
+        // Check if the package is installed locally
+        const isInstalled = this.isNpmPackageInstalledLocally(packageName, projectPath);
+
+        if (isInstalled) {
+          console.debug(`Package ${packageName} is installed locally, fetching local documentation`);
+          return this.getLocalNpmDoc(packageName, projectPath);
+        } else {
+          console.debug(`Package ${packageName} is not installed locally`);
+          // Package is not installed locally, suggest installation
+          return {
+            error: `Failed to fetch NPM documentation (${statusCode || 'unknown status'}): ${errorMessage}`,
+            suggestInstall: true
+          };
+        }
+      } catch (localError) {
+        // Both remote and local attempts failed
+        return {
+          error: `Failed to fetch NPM documentation (${statusCode || 'unknown status'}): ${errorMessage}`,
+        };
+      }
     }
   }
 
@@ -717,35 +1045,120 @@ help(${packageName})
     try {
       let docSections: Array<{ content: string; type: string }> = [];
 
-      // Get and parse documentation based on language
-      switch (language) {
-        case "go":
-          const { stdout: goDoc } = await execAsync(`go doc -all ${packageName}`);
-          docSections = this.parseGoDoc(goDoc);
-          break;
-        case "python":
-          const pythonCode = `
+      try {
+        // First try to get documentation from remote sources
+        switch (language) {
+          case "go":
+            const { stdout: goDoc } = await execAsync(`go doc -all ${packageName}`);
+            docSections = this.parseGoDoc(goDoc);
+            break;
+          case "python":
+            const pythonCode = `
 import ${packageName}
 help(${packageName})
 `;
-          const { stdout: pythonDoc } = await execAsync(`python3 -c "${pythonCode}"`);
-          docSections = this.parsePythonDoc(pythonDoc);
-          break;
-        case "npm":
-          const config = this.getRegistryConfigForPackage(packageName, projectPath);
-          const packagePath = encodeURIComponent(packageName);
-          const url = `${config.registry}/${packagePath}`;
+            const { stdout: pythonDoc } = await execAsync(`python3 -c "${pythonCode}"`);
+            docSections = this.parsePythonDoc(pythonDoc);
+            break;
+          case "npm":
+            const config = this.getRegistryConfigForPackage(packageName, projectPath);
+            const packagePath = encodeURIComponent(packageName);
+            const url = `${config.registry}/${packagePath}`;
 
-          const headers: Record<string, string> = {};
-          if (config.token) {
-            headers.Authorization = `Bearer ${config.token}`;
+            const headers: Record<string, string> = {};
+            if (config.token) {
+              headers.Authorization = `Bearer ${config.token}`;
+            }
+
+            const response = await axios.get(url, { headers });
+            docSections = this.parseNpmDoc(response.data);
+            break;
+          default:
+            throw new Error(`Unsupported language: ${language}`);
+        }
+      } catch (remoteError) {
+        // Remote documentation fetch failed, check if package is installed locally
+        console.debug(`Remote documentation fetch failed for ${packageName}: ${remoteError}`);
+
+        let isInstalled = false;
+
+        // Check if the package is installed locally
+        switch (language) {
+          case "go":
+            isInstalled = await this.isGoPackageInstalledLocally(packageName, projectPath);
+            break;
+          case "python":
+            isInstalled = await this.isPythonPackageInstalledLocally(packageName, projectPath);
+            break;
+          case "npm":
+            isInstalled = this.isNpmPackageInstalledLocally(packageName, projectPath);
+            break;
+        }
+
+        if (isInstalled) {
+          console.debug(`Package ${packageName} is installed locally, fetching local documentation`);
+
+          // Get documentation from locally installed package
+          switch (language) {
+            case "go":
+              const { stdout: localGoDoc } = await execAsync(`go doc -all ${packageName}`);
+              docSections = this.parseGoDoc(localGoDoc);
+              break;
+            case "python":
+              const localPythonCode = `
+import ${packageName}
+help(${packageName})
+`;
+              const { stdout: localPythonDoc } = await execAsync(`python3 -c "${localPythonCode}"`);
+              docSections = this.parsePythonDoc(localPythonDoc);
+              break;
+            case "npm":
+              // For NPM, we need to manually parse the README from the local package
+              try {
+                const basePath = projectPath || process.cwd();
+                const packagePath = join(basePath, "node_modules", packageName);
+                const readmePaths = [
+                  join(packagePath, "README.md"),
+                  join(packagePath, "readme.md"),
+                  join(packagePath, "Readme.md"),
+                  join(packagePath, "README.markdown"),
+                  join(packagePath, "README")
+                ];
+
+                // Find and read README
+                for (const readmePath of readmePaths) {
+                  if (existsSync(readmePath)) {
+                    const readme = readFileSync(readmePath, "utf-8");
+
+                    // Create a simple data structure similar to what we'd get from the registry
+                    const packageJsonPath = join(packagePath, "package.json");
+                    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
+
+                    docSections = this.parseNpmDoc({
+                      description: packageJson.description,
+                      readme: readme
+                    });
+                    break;
+                  }
+                }
+              } catch (localNpmError) {
+                console.debug(`Failed to parse local NPM documentation: ${localNpmError}`);
+              }
+              break;
           }
+        } else {
+          // Package is not installed locally and remote fetch failed
+          const result: SearchResults = {
+            results: [],
+            totalResults: 0
+          };
 
-          const response = await axios.get(url, { headers });
-          docSections = this.parseNpmDoc(response.data);
-          break;
-        default:
-          throw new Error(`Unsupported language: ${language}`);
+          // Return empty results with a special error that will be handled by the caller
+          throw new McpError(
+            ErrorCode.InternalError,
+            `Failed to search documentation for ${packageName}. Package is not installed locally and remote fetch failed: ${remoteError instanceof Error ? remoteError.message : String(remoteError)}`
+          );
+        }
       }
 
       if (docSections.length === 0) {
@@ -822,9 +1235,21 @@ help(${packageName})
         };
       }
     } catch (error) {
+      // Check if the error message contains information about package not being installed
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes("not installed locally")) {
+        // Create a result with a special error message that indicates installation is needed
+        return {
+          results: [],
+          totalResults: 0,
+          error: errorMessage,
+          suggestInstall: true
+        };
+      }
+
       throw new McpError(
         ErrorCode.InternalError,
-        `Failed to search documentation: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to search documentation: ${errorMessage}`
       );
     }
   }
