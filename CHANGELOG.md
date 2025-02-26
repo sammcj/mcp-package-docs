@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 0.1.16 (2025-02-25)
+
+
+### Features
+
+* lsp server ([9566c89](https://github.com/sammcj/mcp-package-docs/commit/9566c8907f082a16b299f2b83df239fe2665cf0d))
+
 ### [0.1.15](https://github.com/sammcj/mcp-package-docs/compare/v0.1.14...v0.1.15) (2025-02-25)
 
 

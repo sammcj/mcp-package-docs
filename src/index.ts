@@ -16,6 +16,7 @@ import { readFileSync, existsSync } from "fs";
 import Fuse from "fuse.js";
 import { homedir } from "os";
 import { join as pathJoin } from "path";
+import TypeScriptLspClient from "./lsp/typescript-lsp-client.js";
 
 // Simple MCP-compliant logger
 // Ensures stdout is kept clean for JSON-RPC messages by routing all logs to stderr
@@ -169,6 +170,8 @@ class PackageDocsServer {
   private cache: Map<string, DocResult>;
   private registryMap: Map<string, NpmConfig>;
   private logger: McpLogger;
+  private lspClient?: TypeScriptLspClient;
+  private lspEnabled: boolean;
 
   constructor() {
     this.logger = logger.child('PackageDocs');
@@ -186,10 +189,29 @@ class PackageDocsServer {
     );
 
     this.cache = new Map();
+
+    // Check if LSP functionality is enabled via environment variable
+    this.lspEnabled = process.env.ENABLE_LSP === "true";
+    if (this.lspEnabled) {
+      console.log("Language Server Protocol support is enabled");
+      try {
+        this.lspClient = new TypeScriptLspClient();
+        console.log("TypeScript Language Server client initialized successfully");
+      } catch (error) {
+        console.error("Failed to initialize TypeScript Language Server client:", error);
+        this.lspEnabled = false;
+      }
+    } else {
+      console.log("Language Server Protocol support is disabled");
+    }
+
     this.setupToolHandlers();
 
     this.server.onerror = (error) => this.logger.error("Server error:", error);
     process.on("SIGINT", async () => {
+      if (this.lspClient) {
+        this.lspClient.cleanup();
+      }
       await this.server.close();
       process.exit(0);
     });
@@ -591,8 +613,8 @@ help(${packageName})
   }
 
   private setupToolHandlers() {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [
+    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+      const baseTools = [
         {
           name: "search_package_docs",
           description: "Search for symbols or content within package documentation",
@@ -693,14 +715,130 @@ help(${packageName})
             required: ["package"],
           },
         },
-      ],
-    }));
+      ];
+
+      // Add LSP tools if enabled
+      if (this.lspEnabled && this.lspClient) {
+        const lspTools = [
+          {
+            name: "get_hover",
+            description: "Get hover information for a position in a document using Language Server Protocol",
+            inputSchema: {
+              type: "object",
+              properties: {
+                languageId: {
+                  type: "string",
+                  description: "The language identifier (e.g., 'typescript', 'javascript')"
+                },
+                filePath: {
+                  type: "string",
+                  description: "Absolute or relative path to the source file"
+                },
+                content: {
+                  type: "string",
+                  description: "The current content of the file"
+                },
+                line: {
+                  type: "number",
+                  description: "Zero-based line number for hover position"
+                },
+                character: {
+                  type: "number",
+                  description: "Zero-based character offset for hover position"
+                },
+                projectRoot: {
+                  type: "string",
+                  description: "Root directory of the project for resolving imports and node_modules"
+                },
+              },
+              required: ["languageId", "filePath", "content", "line", "character"],
+            },
+          },
+          {
+            name: "get_completions",
+            description: "Get completion suggestions for a position in a document using Language Server Protocol",
+            inputSchema: {
+              type: "object",
+              properties: {
+                languageId: {
+                  type: "string",
+                  description: "The language identifier (e.g., 'typescript', 'javascript')"
+                },
+                filePath: {
+                  type: "string",
+                  description: "Absolute or relative path to the source file"
+                },
+                content: {
+                  type: "string",
+                  description: "The current content of the file"
+                },
+                line: {
+                  type: "number",
+                  description: "Zero-based line number for completion position"
+                },
+                character: {
+                  type: "number",
+                  description: "Zero-based character offset for completion position"
+                },
+                projectRoot: {
+                  type: "string",
+                  description: "Root directory of the project for resolving imports and node_modules"
+                },
+              },
+              required: ["languageId", "filePath", "content", "line", "character"],
+            },
+          },
+          {
+            name: "get_diagnostics",
+            description: "Get diagnostic information for a document using Language Server Protocol",
+            inputSchema: {
+              type: "object",
+              properties: {
+                languageId: {
+                  type: "string",
+                  description: "The language identifier (e.g., 'typescript', 'javascript')"
+                },
+                filePath: {
+                  type: "string",
+                  description: "Absolute or relative path to the source file"
+                },
+                content: {
+                  type: "string",
+                  description: "The current content of the file"
+                },
+                projectRoot: {
+                  type: "string",
+                  description: "Root directory of the project for resolving imports and node_modules"
+                },
+              },
+              required: ["languageId", "filePath", "content"],
+            },
+          },
+        ];
+
+        return { tools: [...baseTools, ...lspTools] };
+      }
+
+      return { tools: baseTools };
+    });
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (!request.params.arguments) {
         throw new McpError(ErrorCode.InvalidParams, "Arguments are required");
       }
 
+      // Handle LSP tools if enabled
+      if (this.lspEnabled && this.lspClient) {
+        if (request.params.name === "get_hover") {
+          return await this.handleGetHover(request.params.arguments);
+        } else if (request.params.name === "get_completions") {
+          return await this.handleGetCompletions(request.params.arguments);
+        } else if (request.params.name === "get_diagnostics") {
+          return await this.handleGetDiagnostics(request.params.arguments);
+        }
+      }
+
+      // Handle regular package documentation tools
       const cacheKey = JSON.stringify(request.params);
       const cachedResult = this.cache.get(cacheKey);
       if (cachedResult) {
@@ -1417,11 +1555,142 @@ help(${packageName})
     }
   }
 
+  private async handleGetHover(args: any): Promise<any> {
+    if (!this.lspClient) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        "LSP functionality is not enabled"
+      );
+    }
+
+    const { languageId, filePath, content, line, character, projectRoot } = args;
+
+    try {
+      const hover = await this.lspClient.getHover(
+        languageId,
+        filePath,
+        content,
+        line,
+        character,
+        projectRoot
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: hover?.contents
+              ? JSON.stringify(hover.contents, null, 2)
+              : "No hover information available",
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("[handleGetHover] Request failed:", error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to get hover information: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  private async handleGetCompletions(args: any): Promise<any> {
+    if (!this.lspClient) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        "LSP functionality is not enabled"
+      );
+    }
+
+    const { languageId, filePath, content, line, character, projectRoot } = args;
+
+    try {
+      const completions = await this.lspClient.getCompletions(
+        languageId,
+        filePath,
+        content,
+        line,
+        character,
+        projectRoot
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: completions && completions.length > 0
+              ? JSON.stringify(completions, null, 2)
+              : "No completions available",
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("[handleGetCompletions] Request failed:", error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to get completions: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  private async handleGetDiagnostics(args: any): Promise<any> {
+    if (!this.lspClient) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        "LSP functionality is not enabled"
+      );
+    }
+
+    const { languageId, filePath, content, projectRoot } = args;
+
+    try {
+      const diagnostics = await this.lspClient.getDiagnostics(
+        languageId,
+        filePath,
+        content,
+        projectRoot
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: diagnostics && diagnostics.length > 0
+              ? JSON.stringify(diagnostics, null, 2)
+              : "No diagnostics available",
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("[handleGetDiagnostics] Request failed:", error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to get diagnostics: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
   async run() {
     // Log server startup information
     this.logger.info(
       "Package Docs MCP server running on stdio, version:",
       packageJson.version,
+      this.lspEnabled ? "(LSP enabled)" : "(LSP disabled)"
     );
 
     // Initialize and connect the transport

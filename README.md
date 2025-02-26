@@ -1,7 +1,6 @@
 # Package Documentation MCP Server
 
-
-An MCP (Model Context Protocol) server that provides LLMs with efficient access to package documentation across multiple programming languages.
+An MCP (Model Context Protocol) server that provides LLMs with efficient access to package documentation across multiple programming languages and language server protocol (LSP) capabilities.
 
 [![smithery badge](https://smithery.ai/badge/mcp-package-docs)](https://smithery.ai/server/mcp-package-docs)
 
@@ -25,6 +24,13 @@ An MCP (Model Context Protocol) server that provides LLMs with efficient access 
   - Fuzzy matching for flexible queries
   - Context-aware results with relevance scoring
   - Symbol extraction from search results
+
+- **Language Server Protocol (LSP) Support**:
+  - Hover information for code symbols
+  - Code completions
+  - Diagnostics (errors and warnings)
+  - Currently supports TypeScript/JavaScript
+  - Extensible for other languages
 
 - **Performance Optimised**:
   - Built-in caching
@@ -56,13 +62,40 @@ npx -y @smithery/cli install mcp-package-docs --client claude
   "mcpServers": {
     "package-docs": {
       "command": "npx",
-      "args": ["-y", "mcp-package-docs"]
+      "args": ["-y", "mcp-package-docs"],
+      "env": {
+        "ENABLE_LSP": "true" // Optional: Enable Language Server Protocol support
+      }
     }
   }
 }
 ```
 
-2. The server provides the following tools:
+2. The LSP functionality includes default configurations for common language servers:
+
+- TypeScript/JavaScript: `typescript-language-server --stdio`
+- HTML: `vscode-html-language-server --stdio`
+- CSS: `vscode-css-language-server --stdio`
+- JSON: `vscode-json-language-server --stdio`
+
+You can override these defaults if needed:
+
+```json
+{
+  "mcpServers": {
+    "package-docs": {
+      "command": "npx",
+      "args": ["-y", "mcp-package-docs"],
+      "env": {
+        "ENABLE_LSP": "true",
+        "TYPESCRIPT_SERVER": "{\"command\":\"/custom/path/typescript-language-server\",\"args\":[\"--stdio\"]}"
+      }
+    }
+  }
+}
+```
+
+3. The server provides the following tools:
 
 #### lookup_go_doc
 
@@ -133,6 +166,59 @@ registry=https://nexus.mycompany.com/repository/npm-group/
 @mycompany-ct:registry=https://npm.pkg.github.com/
 ```
 
+### Language Server Protocol (LSP) Tools
+
+When LSP support is enabled, the following additional tools become available:
+
+#### get_hover
+
+Get hover information for a position in a document
+```typescript
+{
+  "name": "get_hover",
+  "arguments": {
+    "languageId": "typescript", // required: language identifier (e.g., "typescript", "javascript")
+    "filePath": "src/index.ts", // required: path to the source file
+    "content": "const x = 1;",  // required: content of the file
+    "line": 0,                  // required: zero-based line number
+    "character": 6,             // required: zero-based character position
+    "projectRoot": "/path/to/project" // optional: project root directory
+  }
+}
+```
+
+#### get_completions
+
+Get completion suggestions for a position in a document
+```typescript
+{
+  "name": "get_completions",
+  "arguments": {
+    "languageId": "typescript", // required: language identifier
+    "filePath": "src/index.ts", // required: path to the source file
+    "content": "const arr = []; arr.",  // required: content of the file
+    "line": 0,                  // required: zero-based line number
+    "character": 16,            // required: zero-based character position
+    "projectRoot": "/path/to/project" // optional: project root directory
+  }
+}
+```
+
+#### get_diagnostics
+
+Get diagnostic information (errors, warnings) for a document
+```typescript
+{
+  "name": "get_diagnostics",
+  "arguments": {
+    "languageId": "typescript", // required: language identifier
+    "filePath": "src/index.ts", // required: path to the source file
+    "content": "const x: string = 1;",  // required: content of the file
+    "projectRoot": "/path/to/project" // optional: project root directory
+  }
+}
+```
+
 ### Example Usage in an LLM
 
 #### Looking up Documentation
@@ -159,6 +245,19 @@ const searchResult = await use_mcp_tool({
     fuzzy: true
   }
 });
+
+// Using LSP for hover information (when LSP is enabled)
+const hoverResult = await use_mcp_tool({
+  server_name: "package-docs",
+  tool_name: "get_hover",
+  arguments: {
+    languageId: "typescript",
+    filePath: "src/index.ts",
+    content: "const axios = require('axios');\naxios.get",
+    line: 1,
+    character: 7
+  }
+});
 ```
 
 ## Requirements
@@ -167,6 +266,9 @@ const searchResult = await use_mcp_tool({
 - Go (for Go package documentation)
 - Python 3 (for Python package documentation)
 - Internet connection (for NPM package documentation)
+- Language servers (for LSP functionality):
+  - TypeScript/JavaScript: `npm install -g typescript-language-server typescript`
+  - HTML/CSS/JSON: `npm install -g vscode-langservers-extracted`
 
 ## Development
 
