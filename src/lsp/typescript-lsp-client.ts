@@ -3,8 +3,6 @@ import {
   MessageConnection,
   StreamMessageReader,
   StreamMessageWriter,
-} from 'vscode-languageserver-protocol/node.js';
-import {
   CompletionItem,
   CompletionParams,
   DidOpenTextDocumentParams,
@@ -13,7 +11,8 @@ import {
   PublishDiagnosticsParams,
   TextDocumentIdentifier,
   TextDocumentItem,
-} from 'vscode-languageserver-protocol';
+} from 'vscode-languageserver-protocol/node.js';
+import { logger, McpLogger } from '../logger.js';
 import * as childProcess from 'child_process';
 import { dirname, join, isAbsolute } from 'path';
 import { mkdirSync, existsSync } from 'fs';
@@ -46,12 +45,12 @@ async function commandExists(command: string): Promise<boolean> {
 // Helper function to install a package using npm
 async function installPackage(packageName: string): Promise<void> {
   try {
-    console.log(`[installPackage] Installing ${packageName}...`);
+    logger.info(`Installing ${packageName}...`);
     const exec = promisify(childProcess.exec);
     await exec(`npm install --no-save ${packageName}`);
-    console.log(`[installPackage] Successfully installed ${packageName}`);
+    logger.info(`Successfully installed ${packageName}`);
   } catch (error) {
-    console.error(`[installPackage] Failed to install ${packageName}:`, error);
+    logger.error(`Failed to install ${packageName}:`, error);
     throw error;
   }
 }
@@ -65,10 +64,12 @@ export interface LanguageServerInstance {
 export class TypeScriptLspClient {
   private languageServers: Map<string, LanguageServerInstance>;
   private diagnosticsListeners: Map<string, ((params: PublishDiagnosticsParams) => void)[]>;
+  private logger: McpLogger;
 
   constructor() {
     this.languageServers = new Map();
     this.diagnosticsListeners = new Map();
+    this.logger = logger.child('LSP');
   }
 
   private getServerKey(languageId: string, projectRoot?: string): string {
@@ -76,7 +77,7 @@ export class TypeScriptLspClient {
   }
 
   private async getLanguageServerConfig(languageId: string): Promise<LanguageServerConfig | undefined> {
-    console.log(`[getLanguageServerConfig] Getting config for ${languageId}`);
+    this.logger.info(`Getting config for ${languageId}`);
 
     // Default configurations for common language servers
     const defaultConfigs: Record<string, LanguageServerConfig> = {
@@ -104,29 +105,29 @@ export class TypeScriptLspClient {
 
     // Check if there's an environment variable override
     const configStr = process.env[`${languageId.toUpperCase()}_SERVER`];
-    console.log(`[getLanguageServerConfig] Raw config for ${languageId}:`, configStr);
+    this.logger.info(`Raw config for ${languageId}:`, configStr);
 
     if (configStr) {
       try {
         // Try to parse the environment variable configuration
         const config = JSON.parse(configStr);
-        console.log(`[getLanguageServerConfig] Using custom config for ${languageId}:`, config);
+        this.logger.info(`Using custom config for ${languageId}:`, config);
         return config;
       } catch (error) {
         if (error instanceof Error) {
-          console.error(`[getLanguageServerConfig] Invalid config for ${languageId}:`, error.message);
+          this.logger.error(`Invalid config for ${languageId}:`, error.message);
         } else {
-          console.error(`[getLanguageServerConfig] Invalid config for ${languageId}:`, error);
+          this.logger.error(`Invalid config for ${languageId}:`, error);
         }
         // Fall back to default if parsing fails
-        console.log(`[getLanguageServerConfig] Falling back to default config for ${languageId}`);
+        this.logger.info(`Falling back to default config for ${languageId}`);
       }
     }
 
     // Get default config
     const defaultConfig = defaultConfigs[languageId.toLowerCase()];
     if (!defaultConfig) {
-      console.log(`[getLanguageServerConfig] No config found for ${languageId}`);
+      this.logger.info(`No config found for ${languageId}`);
       return undefined;
     }
 
@@ -135,7 +136,7 @@ export class TypeScriptLspClient {
     const commandAvailable = await commandExists(commandName);
 
     if (!commandAvailable) {
-      console.log(`[getLanguageServerConfig] Command ${commandName} not found, attempting to install...`);
+      this.logger.info(`Command ${commandName} not found, attempting to install...`);
 
       // Map language server commands to npm packages
       const packageMap: Record<string, string> = {
@@ -149,7 +150,7 @@ export class TypeScriptLspClient {
       if (packageToInstall) {
         try {
           await installPackage(packageToInstall);
-          console.log(`[getLanguageServerConfig] Successfully installed ${packageToInstall}`);
+          this.logger.info(`Successfully installed ${packageToInstall}`);
 
           // For locally installed packages, use npx to run them
           return {
@@ -157,21 +158,21 @@ export class TypeScriptLspClient {
             args: [commandName, ...defaultConfig.args]
           };
         } catch (error) {
-          console.error(`[getLanguageServerConfig] Failed to install ${packageToInstall}:`, error);
+          this.logger.error(`Failed to install ${packageToInstall}:`, error);
         }
       }
     }
 
-    console.log(`[getLanguageServerConfig] Using default config for ${languageId}`);
+    this.logger.info(`Using default config for ${languageId}`);
     return defaultConfig;
   }
 
   public async getOrCreateServer(languageId: string, projectRoot?: string): Promise<LanguageServerInstance> {
     const serverKey = this.getServerKey(languageId, projectRoot);
-    console.log(`[getOrCreateServer] Request for ${serverKey}`);
+    this.logger.info(`Request for ${serverKey}`);
 
     if (this.languageServers.has(serverKey)) {
-      console.log(`[getOrCreateServer] Returning existing ${serverKey} server`);
+      this.logger.info(`Returning existing ${serverKey} server`);
       return this.languageServers.get(serverKey)!;
     }
 
@@ -180,19 +181,19 @@ export class TypeScriptLspClient {
       throw new Error(`No language server configured for ${languageId}`);
     }
 
-    console.log(`[getOrCreateServer] Spawning ${serverKey} server:`, config);
+    this.logger.info(`Spawning ${serverKey} server:`, config);
     const serverProcess = childProcess.spawn(config.command, config.args);
 
     serverProcess.on('error', (error) => {
-      console.error(`[${serverKey} process] Error:`, error);
+      this.logger.error(`[${serverKey} process] Error:`, error);
     });
 
     serverProcess.stderr.on('data', (data) => {
-      console.error(`[${serverKey} stderr]`, data.toString());
+      this.logger.error(`[${serverKey} stderr]`, data.toString());
     });
 
     // Create message connection
-    console.log(`[getOrCreateServer] Creating message connection for ${serverKey}`);
+    this.logger.info(`Creating message connection for ${serverKey}`);
     const connection = createMessageConnection(
       new StreamMessageReader(serverProcess.stdout),
       new StreamMessageWriter(serverProcess.stdin)
@@ -200,22 +201,22 @@ export class TypeScriptLspClient {
 
     // Debug logging for messages
     connection.onNotification((method, params) => {
-      console.log(`[${serverKey}] Notification received:`, method, params);
+      this.logger.debug(`[${serverKey}] Notification received:`, method, params);
     });
 
     connection.onRequest((method, params) => {
-      console.log(`[${serverKey}] Request received:`, method, params);
+      this.logger.debug(`[${serverKey}] Request received:`, method, params);
     });
 
     // If projectRoot is not provided, default to current working directory
     const actualRoot = projectRoot && existsSync(projectRoot) ? projectRoot : process.cwd();
 
     // Initialize connection
-    console.log(`[getOrCreateServer] Starting connection for ${serverKey}`);
+    this.logger.info(`Starting connection for ${serverKey}`);
     connection.listen();
 
     // Initialize language server
-    console.log(`[getOrCreateServer] Initializing ${serverKey} server`);
+    this.logger.info(`Initializing ${serverKey} server`);
     try {
       const initializeResult = await connection.sendRequest('initialize', {
         processId: process.pid,
@@ -290,9 +291,9 @@ export class TypeScriptLspClient {
         initializationOptions: null,
       } as InitializeParams);
 
-      console.log(`[getOrCreateServer] Initialize result for ${serverKey}:`, initializeResult);
+      this.logger.info(`Initialize result for ${serverKey}:`, initializeResult);
       await connection.sendNotification('initialized');
-      console.log(`[getOrCreateServer] Sent initialized notification for ${serverKey}`);
+      this.logger.info(`Sent initialized notification for ${serverKey}`);
 
       // Optional: send workspace configuration changes if needed
       if (languageId === 'typescript') {
@@ -314,7 +315,7 @@ export class TypeScriptLspClient {
         });
       }
     } catch (error) {
-      console.error(`[getOrCreateServer] Failed to initialize ${serverKey} server:`, error);
+      this.logger.error(`Failed to initialize ${serverKey} server:`, error);
       throw error;
     }
 
@@ -322,7 +323,7 @@ export class TypeScriptLspClient {
     connection.onNotification(
       'textDocument/publishDiagnostics',
       (params: PublishDiagnosticsParams) => {
-        console.log(`[${serverKey}] Received diagnostics:`, params);
+        this.logger.debug(`[${serverKey}] Received diagnostics:`, params);
         const listeners = this.diagnosticsListeners.get(params.uri) || [];
         listeners.forEach(listener => listener(params));
       }
@@ -330,7 +331,7 @@ export class TypeScriptLspClient {
 
     const server = { connection, process: serverProcess, workspaceRoot: actualRoot };
     this.languageServers.set(serverKey, server);
-    console.log(`[getOrCreateServer] Successfully created ${serverKey} server`);
+    this.logger.info(`Successfully created ${serverKey} server`);
     return server;
   }
 
@@ -342,7 +343,7 @@ export class TypeScriptLspClient {
     character: number,
     projectRoot?: string
   ): Promise<any> {
-    console.log(`[getHover] Processing request for ${languageId}`);
+    this.logger.info(`Processing hover request for ${languageId}`);
 
     const server = await this.getOrCreateServer(languageId, projectRoot);
     const actualRoot = server.workspaceRoot;
@@ -363,22 +364,22 @@ export class TypeScriptLspClient {
       text: content,
     };
 
-    console.log(`[getHover] Sending document to server:`, textDocument);
+    this.logger.debug(`Sending document to server:`, textDocument);
     await server.connection.sendNotification('textDocument/didOpen', {
       textDocument,
     } as DidOpenTextDocumentParams);
 
     try {
-      console.log(`[getHover] Requesting hover information`);
+      this.logger.debug(`Requesting hover information`);
       const hover: Hover = await server.connection.sendRequest('textDocument/hover', {
         textDocument: { uri } as TextDocumentIdentifier,
         position: { line, character },
       });
 
-      console.log(`[getHover] Received hover response:`, hover);
+      this.logger.debug(`Received hover response:`, hover);
       return hover;
     } catch (error) {
-      console.error('[getHover] Request failed:', error);
+      this.logger.error('Hover request failed:', error);
       throw error;
     }
   }
@@ -391,7 +392,7 @@ export class TypeScriptLspClient {
     character: number,
     projectRoot?: string
   ): Promise<CompletionItem[]> {
-    console.log(`[getCompletions] Processing request for ${languageId}`);
+    this.logger.info(`Processing completions request for ${languageId}`);
 
     const server = await this.getOrCreateServer(languageId, projectRoot);
     const actualRoot = server.workspaceRoot;
@@ -412,13 +413,13 @@ export class TypeScriptLspClient {
       text: content,
     };
 
-    console.log(`[getCompletions] Sending document to server:`, textDocument);
+    this.logger.debug(`Sending document to server:`, textDocument);
     await server.connection.sendNotification('textDocument/didOpen', {
       textDocument,
     } as DidOpenTextDocumentParams);
 
     try {
-      console.log(`[getCompletions] Requesting completions`);
+      this.logger.debug(`Requesting completions`);
       const completionParams: CompletionParams = {
         textDocument: { uri },
         position: { line, character },
@@ -429,10 +430,10 @@ export class TypeScriptLspClient {
         completionParams
       );
 
-      console.log(`[getCompletions] Received completions:`, completions);
+      this.logger.debug(`Received completions:`, completions);
       return completions || [];
     } catch (error) {
-      console.error('[getCompletions] Request failed:', error);
+      this.logger.error('Completions request failed:', error);
       throw error;
     }
   }
@@ -443,7 +444,7 @@ export class TypeScriptLspClient {
     content: string,
     projectRoot?: string
   ): Promise<any> {
-    console.log(`[getDiagnostics] Processing request for ${languageId}`);
+    this.logger.info(`Processing diagnostics request for ${languageId}`);
 
     const server = await this.getOrCreateServer(languageId, projectRoot);
     const actualRoot = server.workspaceRoot;
@@ -464,11 +465,11 @@ export class TypeScriptLspClient {
       text: content,
     };
 
-    console.log(`[getDiagnostics] Setting up diagnostics listener for ${uri}`);
+    this.logger.debug(`Setting up diagnostics listener for ${uri}`);
     return new Promise((resolve, reject) => {
       const listeners = this.diagnosticsListeners.get(uri) || [];
       const listener = (params: PublishDiagnosticsParams) => {
-        console.log(`[getDiagnostics] Received diagnostics for ${uri}:`, params);
+        this.logger.debug(`Received diagnostics for ${uri}:`, params);
         resolve(params.diagnostics);
 
         // Remove listener after receiving diagnostics
@@ -481,14 +482,14 @@ export class TypeScriptLspClient {
       this.diagnosticsListeners.set(uri, listeners);
 
       // Send document to trigger diagnostics
-      console.log(`[getDiagnostics] Sending document to server:`, textDocument);
+      this.logger.debug(`Sending document to server:`, textDocument);
       server.connection.sendNotification('textDocument/didOpen', {
         textDocument,
       } as DidOpenTextDocumentParams);
 
       // Set timeout
       setTimeout(() => {
-        console.log(`[getDiagnostics] Timeout reached for ${uri}`);
+        this.logger.debug(`Timeout reached for ${uri}`);
         const index = listeners.indexOf(listener);
         if (index !== -1) {
           listeners.splice(index, 1);
@@ -499,9 +500,9 @@ export class TypeScriptLspClient {
   }
 
   public cleanup(): void {
-    console.log('[cleanup] Disposing language servers...');
+    this.logger.info('Disposing language servers...');
     for (const [id, server] of this.languageServers.entries()) {
-      console.log(`[cleanup] Disposing ${id} server...`);
+      this.logger.info(`Disposing ${id} server...`);
       server.connection.dispose();
       server.process.kill();
     }

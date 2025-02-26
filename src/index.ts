@@ -18,40 +18,7 @@ import { homedir } from "os";
 import { join as pathJoin } from "path";
 import TypeScriptLspClient from "./lsp/typescript-lsp-client.js";
 
-// Simple MCP-compliant logger
-// Ensures stdout is kept clean for JSON-RPC messages by routing all logs to stderr
-// This follows the pattern used by other CLI tools that need to maintain clean stdout
-class McpLogger {
-  private prefix: string;
-
-  constructor(prefix: string = '') {
-    this.prefix = prefix ? `[${prefix}] ` : '';
-  }
-
-  info(...args: any[]): void {
-    console.error(`${this.prefix}INFO:`, ...args);
-  }
-
-  debug(...args: any[]): void {
-    console.error(`${this.prefix}DEBUG:`, ...args);
-  }
-
-  warn(...args: any[]): void {
-    console.error(`${this.prefix}WARN:`, ...args);
-  }
-
-  error(...args: any[]): void {
-    console.error(`${this.prefix}ERROR:`, ...args);
-  }
-
-  // Create a child logger with a new prefix
-  child(prefix: string): McpLogger {
-    return new McpLogger(prefix);
-  }
-}
-
-// Create root logger
-const logger = new McpLogger('MCP');
+import { logger, McpLogger } from './logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -193,16 +160,16 @@ class PackageDocsServer {
     // Check if LSP functionality is enabled via environment variable
     this.lspEnabled = process.env.ENABLE_LSP === "true";
     if (this.lspEnabled) {
-      console.log("Language Server Protocol support is enabled");
+      this.logger.info("Language Server Protocol support is enabled");
       try {
         this.lspClient = new TypeScriptLspClient();
-        console.log("TypeScript Language Server client initialized successfully");
+        this.logger.info("TypeScript Language Server client initialized successfully");
       } catch (error) {
-        console.error("Failed to initialize TypeScript Language Server client:", error);
+        this.logger.error("Failed to initialize TypeScript Language Server client:", error);
         this.lspEnabled = false;
       }
     } else {
-      console.log("Language Server Protocol support is disabled");
+      this.logger.info("Language Server Protocol support is disabled");
     }
 
     this.setupToolHandlers();
