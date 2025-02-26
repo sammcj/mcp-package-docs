@@ -18,6 +18,41 @@ import { homedir } from "os";
 import { join as pathJoin } from "path";
 import TypeScriptLspClient from "./lsp/typescript-lsp-client.js";
 
+// Simple MCP-compliant logger
+// Ensures stdout is kept clean for JSON-RPC messages by routing all logs to stderr
+// This follows the pattern used by other CLI tools that need to maintain clean stdout
+class McpLogger {
+  private prefix: string;
+
+  constructor(prefix: string = '') {
+    this.prefix = prefix ? `[${prefix}] ` : '';
+  }
+
+  info(...args: any[]): void {
+    console.error(`${this.prefix}INFO:`, ...args);
+  }
+
+  debug(...args: any[]): void {
+    console.error(`${this.prefix}DEBUG:`, ...args);
+  }
+
+  warn(...args: any[]): void {
+    console.error(`${this.prefix}WARN:`, ...args);
+  }
+
+  error(...args: any[]): void {
+    console.error(`${this.prefix}ERROR:`, ...args);
+  }
+
+  // Create a child logger with a new prefix
+  child(prefix: string): McpLogger {
+    return new McpLogger(prefix);
+  }
+}
+
+// Create root logger
+const logger = new McpLogger('MCP');
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const packageJson = JSON.parse(
@@ -134,10 +169,12 @@ class PackageDocsServer {
   private server: Server;
   private cache: Map<string, DocResult>;
   private registryMap: Map<string, NpmConfig>;
+  private logger: McpLogger;
   private lspClient?: TypeScriptLspClient;
   private lspEnabled: boolean;
 
   constructor() {
+    this.logger = logger.child('PackageDocs');
     this.registryMap = this.loadNpmConfig();
     this.server = new Server(
       {
@@ -170,7 +207,7 @@ class PackageDocsServer {
 
     this.setupToolHandlers();
 
-    this.server.onerror = (error) => console.error("[MCP Error]", error);
+    this.server.onerror = (error) => this.logger.error("Server error:", error);
     process.on("SIGINT", async () => {
       if (this.lspClient) {
         this.lspClient.cleanup();
@@ -266,20 +303,19 @@ class PackageDocsServer {
     const scopeToRegistry = new Map<string, string>();
     const registryToToken = new Map<string, string>();
 
-    console.debug("Loading npm configuration...")
-    console.debug("Project directory:", projectPath || "not specified");
+    this.logger.info("Loading npm configuration...")
+    this.logger.info("Project directory:", projectPath || "not specified");
 
     // First read global .npmrc as base configuration
     const globalNpmrcPath = pathJoin(homedir(), ".npmrc");
-    console.debug("Checking global .npmrc at:", globalNpmrcPath);
+    this.logger.info("Checking global .npmrc at:", globalNpmrcPath);
     if (existsSync(globalNpmrcPath)) {
+      this.logger.info("Found global .npmrc");
       try {
-        console.debug("Found global .npmrc");
         const npmrcContent = readFileSync(globalNpmrcPath, "utf-8");
-        // console.debug("Global .npmrc content:", npmrcContent);
         this.parseNpmrcContent(npmrcContent, scopeToRegistry, registryToToken, registryMap);
       } catch (error) {
-        console.error("Error reading global .npmrc:", error);
+        this.logger.error("Error reading global .npmrc:", error);
       }
     }
 
@@ -299,15 +335,14 @@ class PackageDocsServer {
       // Process paths in reverse order (root to local)
       for (const dir of paths.reverse()) {
         const localNpmrcPath = pathJoin(dir, ".npmrc");
-        console.debug("Checking for .npmrc at:", localNpmrcPath);
+        this.logger.info("Checking for .npmrc at:", localNpmrcPath);
         if (existsSync(localNpmrcPath)) {
+          this.logger.info("Found .npmrc at:", localNpmrcPath);
           try {
-            console.debug("Found .npmrc at:", localNpmrcPath);
             const npmrcContent = readFileSync(localNpmrcPath, "utf-8");
-            // console.debug("Content:", npmrcContent);
             this.parseNpmrcContent(npmrcContent, scopeToRegistry, registryToToken, registryMap);
           } catch (error) {
-            console.error(`Error reading local .npmrc at ${localNpmrcPath}:`, error);
+            this.logger.error(`Error reading local .npmrc at ${localNpmrcPath}:`, error);
           }
         }
       }
@@ -315,13 +350,10 @@ class PackageDocsServer {
 
     try {
       // Associate tokens with registries
-      // console.debug("Scope to Registry mappings:", Object.fromEntries(scopeToRegistry))
-      // console.debug("Registry to Token mappings:", Object.fromEntries(registryToToken));
-
       for (const [scope, registry] of scopeToRegistry.entries()) {
         const hostname = new URL(registry).host;
         const token = registryToToken.get(hostname);
-        console.debug(`Setting config for scope ${scope}:`, { registry, token: token ? "[REDACTED]" : undefined });
+        this.logger.info(`Setting config for scope ${scope}:`, { registry, token: token ? "[REDACTED]" : undefined });
         registryMap.set(scope, { registry, token });
       }
 
@@ -331,19 +363,19 @@ class PackageDocsServer {
         const hostname = new URL(defaultConfig.registry).host;
         const token = registryToToken.get(hostname);
         if (token) {
-          console.debug("Setting token for default registry");
+          this.logger.info("Setting token for default registry");
           registryMap.set("default", { ...defaultConfig, token });
         }
       }
 
-      console.debug("Final registry configurations:",
+      this.logger.info("Final registry configurations:",
         Object.fromEntries(Array.from(registryMap.entries()).map(([k, v]) => [
           k,
           { registry: v.registry, token: v.token ? "[REDACTED]" : undefined }
         ]))
       );
     } catch (error) {
-      console.error("Error processing .npmrc configurations:", error);
+      this.logger.error("Error processing .npmrc configurations:", error);
     }
 
     return registryMap;
@@ -888,31 +920,31 @@ help(${packageName})
         const packageName =
           request.params.name === "search_package_docs" ?
             (request.params.arguments as SearchDocArgs).package :
-          request.params.name === "lookup_go_doc" ?
-            (request.params.arguments as GoDocArgs).package :
-          request.params.name === "lookup_python_doc" ?
-            (request.params.arguments as PythonDocArgs).package :
-          request.params.name === "lookup_npm_doc" ?
-            (request.params.arguments as NpmDocArgs).package :
-          "unknown";
+            request.params.name === "lookup_go_doc" ?
+              (request.params.arguments as GoDocArgs).package :
+              request.params.name === "lookup_python_doc" ?
+                (request.params.arguments as PythonDocArgs).package :
+                request.params.name === "lookup_npm_doc" ?
+                  (request.params.arguments as NpmDocArgs).package :
+                  "unknown";
 
         const language =
           request.params.name === "search_package_docs" ?
             (request.params.arguments as SearchDocArgs).language :
-          request.params.name === "lookup_go_doc" ?
-            "go" :
-          request.params.name === "lookup_python_doc" ?
-            "python" :
-          request.params.name === "lookup_npm_doc" ?
-            "npm" :
-          "unknown";
+            request.params.name === "lookup_go_doc" ?
+              "go" :
+              request.params.name === "lookup_python_doc" ?
+                "python" :
+                request.params.name === "lookup_npm_doc" ?
+                  "npm" :
+                  "unknown";
 
         // Add installation instructions to the error message
         const installCommand =
           language === "go" ? `go get ${packageName}` :
-          language === "python" ? `pip install ${packageName}` :
-          language === "npm" ? `npm install ${packageName}` :
-          "unknown";
+            language === "python" ? `pip install ${packageName}` :
+              language === "npm" ? `npm install ${packageName}` :
+                "unknown";
 
         const installMessage = `Package '${packageName}' is not installed. Would you like to install it using '${installCommand}'?`;
 
@@ -977,17 +1009,17 @@ help(${packageName})
       return result;
     } catch (error) {
       // Remote documentation fetch failed, check if package is installed locally
-      console.debug(`Remote Go documentation fetch failed for ${packageName}: ${error}`);
+      this.logger.error(`Remote Go documentation fetch failed for ${packageName}: ${error}`);
 
       try {
         // Check if the package is installed locally
         const isInstalled = await this.isGoPackageInstalledLocally(packageName, projectPath);
 
         if (isInstalled) {
-          console.debug(`Package ${packageName} is installed locally, fetching local documentation`);
+          this.logger.info(`Package ${packageName} is installed locally, fetching local documentation`);
           return await this.getLocalGoDoc(packageName, symbol, projectPath);
         } else {
-          console.debug(`Package ${packageName} is not installed locally`);
+          this.logger.error(`Package ${packageName} is not installed locally`);
           // Package is not installed locally, suggest installation
           const errorMessage = error instanceof Error ? error.message : String(error);
           return {
@@ -1055,17 +1087,17 @@ help(${packageName})
       return result;
     } catch (error) {
       // Remote documentation fetch failed, check if package is installed locally
-      console.debug(`Remote Python documentation fetch failed for ${packageName}: ${error}`);
+      this.logger.error(`Remote Python documentation fetch failed for ${packageName}: ${error}`);
 
       try {
         // Check if the package is installed locally
         const isInstalled = await this.isPythonPackageInstalledLocally(packageName, projectPath);
 
         if (isInstalled) {
-          console.debug(`Package ${packageName} is installed locally, fetching local documentation`);
+          this.logger.info(`Package ${packageName} is installed locally, fetching local documentation`);
           return await this.getLocalPythonDoc(packageName, symbol, projectPath);
         } else {
-          console.debug(`Package ${packageName} is not installed locally`);
+          this.logger.error(`Package ${packageName} is not installed locally`);
           // Package is not installed locally, suggest installation
           const errorMessage = error instanceof Error ? error.message : String(error);
           return {
@@ -1124,7 +1156,7 @@ help(${packageName})
       return result;
     } catch (error) {
       // Remote documentation fetch failed, check if package is installed locally
-      console.debug(`Remote NPM documentation fetch failed for ${packageName}: ${error}`);
+      this.logger.error(`Remote NPM documentation fetch failed for ${packageName}: ${error}`);
 
       let errorMessage = "Unknown error occurred";
       let statusCode: number | undefined;
@@ -1154,10 +1186,10 @@ help(${packageName})
         const isInstalled = this.isNpmPackageInstalledLocally(packageName, projectPath);
 
         if (isInstalled) {
-          console.debug(`Package ${packageName} is installed locally, fetching local documentation`);
+          this.logger.info(`Package ${packageName} is installed locally, fetching local documentation`);
           return this.getLocalNpmDoc(packageName, projectPath);
         } else {
-          console.debug(`Package ${packageName} is not installed locally`);
+          this.logger.error(`Package ${packageName} is not installed locally`);
           // Package is not installed locally, suggest installation
           return {
             error: `Failed to fetch NPM documentation (${statusCode || 'unknown status'}): ${errorMessage}`,
@@ -1216,7 +1248,7 @@ help(${packageName})
         }
       } catch (remoteError) {
         // Remote documentation fetch failed, check if package is installed locally
-        console.debug(`Remote documentation fetch failed for ${packageName}: ${remoteError}`);
+        this.logger.error(`Remote documentation fetch failed for ${packageName}: ${remoteError}`);
 
         let isInstalled = false;
 
@@ -1234,7 +1266,7 @@ help(${packageName})
         }
 
         if (isInstalled) {
-          console.debug(`Package ${packageName} is installed locally, fetching local documentation`);
+          this.logger.info(`Package ${packageName} is installed locally, fetching local documentation`);
 
           // Get documentation from locally installed package
           switch (language) {
@@ -1280,7 +1312,7 @@ help(${packageName})
                   }
                 }
               } catch (localNpmError) {
-                console.debug(`Failed to parse local NPM documentation: ${localNpmError}`);
+                this.logger.error(`Failed to parse local NPM documentation: ${localNpmError}`);
               }
               break;
           }
@@ -1329,8 +1361,8 @@ help(${packageName})
               const start = Math.max(0, matchStart - 50);
               const end = Math.min(section.content.length, matchStart + query.length + 100);
               match = (start > 0 ? '...' : '') +
-                     section.content.slice(start, end) +
-                     (end < section.content.length ? '...' : '');
+                section.content.slice(start, end) +
+                (end < section.content.length ? '...' : '');
             }
 
             return {
@@ -1357,8 +1389,8 @@ help(${packageName})
               const start = Math.max(0, matchStart - 50);
               const end = Math.min(section.content.length, matchStart + query.length + 100);
               match = (start > 0 ? '...' : '') +
-                     section.content.slice(start, end) +
-                     (end < section.content.length ? '...' : '');
+                section.content.slice(start, end) +
+                (end < section.content.length ? '...' : '');
             }
 
             return {
@@ -1654,15 +1686,21 @@ help(${packageName})
   }
 
   async run() {
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
-    console.info(
+    // Log server startup information
+    this.logger.info(
       "Package Docs MCP server running on stdio, version:",
       packageJson.version,
       this.lspEnabled ? "(LSP enabled)" : "(LSP disabled)"
     );
+
+    // Initialize and connect the transport
+    const transport = new StdioServerTransport();
+    await this.server.connect(transport);
   }
 }
 
 const server = new PackageDocsServer();
-server.run().catch(console.error);
+server.run().catch(error => {
+  logger.error('Error running MCP server:', error);
+  process.exit(1);
+});
