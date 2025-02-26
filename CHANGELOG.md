@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.18](https://github.com/sammcj/mcp-package-docs/compare/v0.1.17...v0.1.18) (2025-02-26)
+
+
+### Bug Fixes
+
+* mcp protocol logging ([e256846](https://github.com/sammcj/mcp-package-docs/commit/e25684670e65c0a8261f1c577affea4f4110e992))
+
 ### [0.1.17](https://github.com/sammcj/mcp-package-docs/compare/v0.1.16...v0.1.17) (2025-02-26)
 
 ### 0.1.16 (2025-02-25)
