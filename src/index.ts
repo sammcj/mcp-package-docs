@@ -581,6 +581,7 @@ help(${packageName})
 
   private setupToolHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+      // Define the main tools
       const baseTools = [
         {
           name: "search_package_docs",
@@ -615,8 +616,102 @@ help(${packageName})
           }
         },
         {
+          name: "describe_go_package",
+          description: "Get a brief description of a Go package",
+          inputSchema: {
+            type: "object",
+            properties: {
+              package: {
+                type: "string",
+                description: "Full package import path (e.g. encoding/json)",
+              },
+              symbol: {
+                type: "string",
+                description:
+                  "Optional symbol name to look up specific documentation",
+              },
+              projectPath: {
+                type: "string",
+                description: "Optional path to project directory for local .npmrc files"
+              }
+            },
+            required: ["package"],
+          },
+        },
+        {
+          name: "describe_python_package",
+          description: "Get a brief description of a Python package",
+          inputSchema: {
+            type: "object",
+            properties: {
+              package: {
+                type: "string",
+                description: "Package name (e.g. requests)",
+              },
+              symbol: {
+                type: "string",
+                description:
+                  "Optional symbol name to look up specific documentation",
+              },
+              projectPath: {
+                type: "string",
+                description: "Optional path to project directory for local .npmrc files"
+              }
+            },
+            required: ["package"],
+          },
+        },
+        {
+          name: "describe_npm_package",
+          description: "Get a brief description of an NPM package",
+          inputSchema: {
+            type: "object",
+            properties: {
+              package: {
+                type: "string",
+                description: "Package name (e.g. axios)",
+              },
+              version: {
+                type: "string",
+                description: "Optional package version",
+              },
+              projectPath: {
+                type: "string",
+                description: "Optional path to project directory for local .npmrc files"
+              }
+            },
+            required: ["package"],
+          },
+        },
+        {
+          name: "get_npm_package_doc",
+          description: "Get full documentation for an NPM package",
+          inputSchema: {
+            type: "object",
+            properties: {
+              package: {
+                type: "string",
+                description: "Package name (e.g. axios)",
+              },
+              version: {
+                type: "string",
+                description: "Optional package version",
+              },
+              projectPath: {
+                type: "string",
+                description: "Optional path to project directory for local .npmrc files"
+              }
+            },
+            required: ["package"],
+          },
+        },
+      ];
+
+      // Add legacy tools for backward compatibility
+      const legacyTools = [
+        {
           name: "lookup_go_doc",
-          description: "Look up Go package documentation",
+          description: "[DEPRECATED] Use describe_go_package instead. Get a brief description of a Go package",
           inputSchema: {
             type: "object",
             properties: {
@@ -639,7 +734,7 @@ help(${packageName})
         },
         {
           name: "lookup_python_doc",
-          description: "Look up Python package documentation",
+          description: "[DEPRECATED] Use describe_python_package instead. Get a brief description of a Python package",
           inputSchema: {
             type: "object",
             properties: {
@@ -662,7 +757,7 @@ help(${packageName})
         },
         {
           name: "lookup_npm_doc",
-          description: "Look up NPM package documentation",
+          description: "[DEPRECATED] Use describe_npm_package instead. Get a brief description of an NPM package",
           inputSchema: {
             type: "object",
             properties: {
@@ -683,6 +778,9 @@ help(${packageName})
           },
         },
       ];
+
+      // Combine main tools with legacy tools
+      const allTools = [...baseTools, ...legacyTools];
 
       // Add LSP tools if enabled
       if (this.lspEnabled && this.lspClient) {
@@ -783,10 +881,10 @@ help(${packageName})
           },
         ];
 
-        return { tools: [...baseTools, ...lspTools] };
+        return { tools: [...allTools, ...lspTools] };
       }
 
-      return { tools: baseTools };
+      return { tools: allTools };
     });
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -836,40 +934,97 @@ help(${packageName})
             )
           };
           break;
-        case "lookup_go_doc":
+        // New function names
+        case "describe_go_package":
           if (!isGoDocArgs(request.params.arguments)) {
             throw new McpError(
               ErrorCode.InvalidParams,
-              "Invalid arguments for Go documentation lookup",
+              "Invalid arguments for Go package description",
             );
           }
-          result = await this.lookupGoDoc(
+          result = await this.describeGoPackage(
+            request.params.arguments.package,
+            request.params.arguments.symbol,
+            request.params.arguments.projectPath
+          );
+          break;
+        case "describe_python_package":
+          if (!isPythonDocArgs(request.params.arguments)) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Invalid arguments for Python package description",
+            );
+          }
+          result = await this.describePythonPackage(
+            request.params.arguments.package,
+            request.params.arguments.symbol,
+            request.params.arguments.projectPath
+          );
+          break;
+        case "describe_npm_package":
+          if (!isNpmDocArgs(request.params.arguments)) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Invalid arguments for NPM package description",
+            );
+          }
+          result = await this.describeNpmPackage(
+            request.params.arguments.package,
+            request.params.arguments.version,
+            request.params.arguments.projectPath
+          );
+          break;
+        case "get_npm_package_doc":
+          if (!isNpmDocArgs(request.params.arguments)) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Invalid arguments for NPM package documentation",
+            );
+          }
+          result = await this.getNpmPackageDoc(
+            request.params.arguments.package,
+            request.params.arguments.version,
+            request.params.arguments.projectPath
+          );
+          break;
+        // Legacy function names for backward compatibility
+        case "lookup_go_doc":
+          this.logger.info("Using deprecated function name 'lookup_go_doc', please use 'describe_go_package' instead");
+          if (!isGoDocArgs(request.params.arguments)) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Invalid arguments for Go package description",
+            );
+          }
+          result = await this.describeGoPackage(
             request.params.arguments.package,
             request.params.arguments.symbol,
             request.params.arguments.projectPath
           );
           break;
         case "lookup_python_doc":
+          this.logger.info("Using deprecated function name 'lookup_python_doc', please use 'describe_python_package' instead");
           if (!isPythonDocArgs(request.params.arguments)) {
             throw new McpError(
               ErrorCode.InvalidParams,
-              "Invalid arguments for Python documentation lookup",
+              "Invalid arguments for Python package description",
             );
           }
-          result = await this.lookupPythonDoc(
+          result = await this.describePythonPackage(
             request.params.arguments.package,
             request.params.arguments.symbol,
             request.params.arguments.projectPath
           );
           break;
         case "lookup_npm_doc":
+          this.logger.info("Using deprecated function name 'lookup_npm_doc', please use 'describe_npm_package' instead");
           if (!isNpmDocArgs(request.params.arguments)) {
             throw new McpError(
               ErrorCode.InvalidParams,
-              "Invalid arguments for NPM documentation lookup",
+              "Invalid arguments for NPM package description",
             );
           }
-          result = await this.lookupNpmDoc(
+          result = await this.describeNpmPackage(
             request.params.arguments.package,
             request.params.arguments.version,
             request.params.arguments.projectPath
@@ -887,22 +1042,22 @@ help(${packageName})
         const packageName =
           request.params.name === "search_package_docs" ?
             (request.params.arguments as SearchDocArgs).package :
-            request.params.name === "lookup_go_doc" ?
+            request.params.name === "describe_go_package" ?
               (request.params.arguments as GoDocArgs).package :
-              request.params.name === "lookup_python_doc" ?
+              request.params.name === "describe_python_package" ?
                 (request.params.arguments as PythonDocArgs).package :
-                request.params.name === "lookup_npm_doc" ?
+                request.params.name === "describe_npm_package" || request.params.name === "get_npm_package_doc" ?
                   (request.params.arguments as NpmDocArgs).package :
                   "unknown";
 
         const language =
           request.params.name === "search_package_docs" ?
             (request.params.arguments as SearchDocArgs).language :
-            request.params.name === "lookup_go_doc" ?
+            request.params.name === "describe_go_package" ?
               "go" :
-              request.params.name === "lookup_python_doc" ?
+              request.params.name === "describe_python_package" ?
                 "python" :
-                request.params.name === "lookup_npm_doc" ?
+                request.params.name === "describe_npm_package" || request.params.name === "get_npm_package_doc" ?
                   "npm" :
                   "unknown";
 
@@ -933,7 +1088,7 @@ help(${packageName})
     });
   }
 
-  private async lookupGoDoc(
+  private async describeGoPackage(
     packageName: string,
     symbol?: string,
     projectPath?: string
@@ -1004,7 +1159,7 @@ help(${packageName})
     }
   }
 
-  private async lookupPythonDoc(
+  private async describePythonPackage(
     packageName: string,
     symbol?: string,
     projectPath?: string
@@ -1082,7 +1237,7 @@ help(${packageName})
     }
   }
 
-  private async lookupNpmDoc(
+  private async describeNpmPackage(
     packageName: string,
     version?: string,
     projectPath?: string
@@ -1155,6 +1310,179 @@ help(${packageName})
         if (isInstalled) {
           this.logger.info(`Package ${packageName} is installed locally, fetching local documentation`);
           return this.getLocalNpmDoc(packageName, projectPath);
+        } else {
+          this.logger.error(`Package ${packageName} is not installed locally`);
+          // Package is not installed locally, suggest installation
+          return {
+            error: `Failed to fetch NPM documentation (${statusCode || 'unknown status'}): ${errorMessage}`,
+            suggestInstall: true
+          };
+        }
+      } catch (localError) {
+        // Both remote and local attempts failed
+        return {
+          error: `Failed to fetch NPM documentation (${statusCode || 'unknown status'}): ${errorMessage}`,
+        };
+      }
+    }
+  }
+
+  /**
+   * Get full documentation for an NPM package
+   */
+  private async getNpmPackageDoc(
+    packageName: string,
+    version?: string,
+    projectPath?: string
+  ): Promise<DocResult> {
+    const config = this.getRegistryConfigForPackage(packageName, projectPath);
+    try {
+      const packagePath = encodeURIComponent(packageName);
+      const url = `${config.registry}/${packagePath}${version ? `/${version}` : ""}`;
+
+      const headers: Record<string, string> = {};
+      if (config.token) {
+        headers.Authorization = `Bearer ${config.token}`;
+      }
+
+      this.logger.info(`Fetching full documentation for NPM package ${packageName} from ${url}`);
+      const response = await axios.get(url, { headers });
+
+      const { description, readme, homepage, repository, author, license, version: pkgVersion } = response.data;
+
+      // Create a comprehensive documentation object
+      const result: DocResult = {
+        description: `# ${packageName}${pkgVersion ? ` v${pkgVersion}` : ''}\n\n${description || 'No description available'}\n\n`
+      };
+
+      // Add metadata section
+      let metadata = '## Package Information\n\n';
+      if (homepage) metadata += `- **Homepage**: ${homepage}\n`;
+      if (repository) {
+        if (typeof repository === 'string') {
+          metadata += `- **Repository**: ${repository}\n`;
+        } else if (repository.url) {
+          metadata += `- **Repository**: ${repository.url}\n`;
+        }
+      }
+      if (author) {
+        if (typeof author === 'string') {
+          metadata += `- **Author**: ${author}\n`;
+        } else if (author.name) {
+          metadata += `- **Author**: ${author.name}${author.email ? ` <${author.email}>` : ''}${author.url ? ` (${author.url})` : ''}\n`;
+        }
+      }
+      if (license) metadata += `- **License**: ${license}\n`;
+
+      result.usage = metadata;
+
+      // Add the full README content
+      if (readme) {
+        result.example = readme;
+      } else {
+        result.example = "No README content available for this package.";
+      }
+
+      return result;
+    } catch (error) {
+      // Remote documentation fetch failed, check if package is installed locally
+      this.logger.error(`Remote NPM documentation fetch failed for ${packageName}: ${error}`);
+
+      let errorMessage = "Unknown error occurred";
+      let statusCode: number | undefined;
+
+      if (error instanceof AxiosError) {
+        statusCode = error.response?.status;
+        const responseData = error.response?.data;
+
+        if (statusCode === 404) {
+          errorMessage = `Package '${packageName}' not found. Please check:\n` +
+            `1. The package name is correct\n` +
+            `2. You have access to the package\n` +
+            `3. The registry URL is correct (current: ${config.registry})\n` +
+            `4. Authentication is properly configured in .npmrc`;
+        } else if (statusCode === 401 || statusCode === 403) {
+          errorMessage = `Authentication failed for package '${packageName}'.\n` +
+            `Please ensure your .npmrc contains valid authentication tokens for ${config.registry}`;
+        } else {
+          errorMessage = responseData?.message || error.message;
+        }
+      } else {
+        errorMessage = String(error);
+      }
+
+      try {
+        // Check if the package is installed locally
+        const isInstalled = this.isNpmPackageInstalledLocally(packageName, projectPath);
+
+        if (isInstalled) {
+          this.logger.info(`Package ${packageName} is installed locally, fetching local documentation`);
+
+          // Get local documentation with full README
+          try {
+            const basePath = projectPath || process.cwd();
+            const packagePath = join(basePath, "node_modules", packageName);
+            const packageJsonPath = join(packagePath, "package.json");
+            const readmePaths = [
+              join(packagePath, "README.md"),
+              join(packagePath, "readme.md"),
+              join(packagePath, "Readme.md"),
+              join(packagePath, "README.markdown"),
+              join(packagePath, "README")
+            ];
+
+            // Read package.json for metadata
+            const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
+            const { description, homepage, repository, author, license, version } = packageJson;
+
+            // Create a comprehensive documentation object
+            const result: DocResult = {
+              description: `# ${packageName}${version ? ` v${version}` : ''}\n\n${description || 'No description available'}\n\n`
+            };
+
+            // Add metadata section
+            let metadata = '## Package Information\n\n';
+            if (homepage) metadata += `- **Homepage**: ${homepage}\n`;
+            if (repository) {
+              if (typeof repository === 'string') {
+                metadata += `- **Repository**: ${repository}\n`;
+              } else if (repository.url) {
+                metadata += `- **Repository**: ${repository.url}\n`;
+              }
+            }
+            if (author) {
+              if (typeof author === 'string') {
+                metadata += `- **Author**: ${author}\n`;
+              } else if (author.name) {
+                metadata += `- **Author**: ${author.name}${author.email ? ` <${author.email}>` : ''}${author.url ? ` (${author.url})` : ''}\n`;
+              }
+            }
+            if (license) metadata += `- **License**: ${license}\n`;
+
+            result.usage = metadata;
+
+            // Find and read README for full documentation
+            let readme = null;
+            for (const readmePath of readmePaths) {
+              if (existsSync(readmePath)) {
+                readme = readFileSync(readmePath, "utf-8");
+                break;
+              }
+            }
+
+            if (readme) {
+              result.example = readme;
+            } else {
+              result.example = "No README content available for this package.";
+            }
+
+            return result;
+          } catch (localDocError) {
+            const errorMessage = localDocError instanceof Error ? localDocError.message : String(localDocError);
+            return {
+              error: `Failed to fetch local NPM documentation: ${errorMessage}`,
+            };
+          }
         } else {
           this.logger.error(`Package ${packageName} is not installed locally`);
           // Package is not installed locally, suggest installation
