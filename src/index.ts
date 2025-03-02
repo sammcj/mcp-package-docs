@@ -47,8 +47,9 @@ interface SearchResults {
 interface SearchResult {
   symbol?: string;
   match: string;
-  context: string;
+  context?: string; // Make context optional to save space
   score: number;
+  type?: string; // Type of the section (function, class, etc.)
 }
 
 interface SearchDocArgs {
@@ -89,6 +90,9 @@ interface NpmDocArgs {
   package: string;
   version?: string;
   projectPath?: string;
+  section?: string;
+  maxLength?: number;
+  query?: string;
 }
 
 const isGoDocArgs = (args: unknown): args is GoDocArgs => {
@@ -123,7 +127,13 @@ const isNpmDocArgs = (args: unknown): args is NpmDocArgs => {
     (typeof (args as NpmDocArgs).version === "string" ||
       (args as NpmDocArgs).version === undefined) &&
     (typeof (args as NpmDocArgs).projectPath === "string" ||
-      (args as NpmDocArgs).projectPath === undefined)
+      (args as NpmDocArgs).projectPath === undefined) &&
+    (typeof (args as NpmDocArgs).section === "string" ||
+      (args as NpmDocArgs).section === undefined) &&
+    (typeof (args as NpmDocArgs).maxLength === "number" ||
+      (args as NpmDocArgs).maxLength === undefined) &&
+    (typeof (args as NpmDocArgs).query === "string" ||
+      (args as NpmDocArgs).query === undefined)
   );
 };
 
@@ -139,6 +149,13 @@ class PackageDocsServer {
   private logger: McpLogger;
   private lspClient?: TypeScriptLspClient;
   private lspEnabled: boolean;
+
+  /**
+   * Connect the server to a transport
+   */
+  public async connect(transport: StdioServerTransport): Promise<void> {
+    await this.server.connect(transport);
+  }
 
   constructor() {
     this.logger = logger.child('PackageDocs');
@@ -579,6 +596,137 @@ help(${packageName})
     }
   }
 
+  private parseGoDoc(doc: string): Array<{ content: string; type: string }> {
+    const sections: Array<{ content: string; type: string }> = [];
+    let currentSection = '';
+    let currentType = 'description';
+
+    const lines = doc.split('\n');
+    for (const line of lines) {
+      if (line.startsWith('func ')) {
+        if (currentSection) {
+          sections.push({ content: currentSection.trim(), type: currentType });
+        }
+        currentSection = line;
+        currentType = 'function';
+      } else if (line.startsWith('type ')) {
+        if (currentSection) {
+          sections.push({ content: currentSection.trim(), type: currentType });
+        }
+        currentSection = line;
+        currentType = 'type';
+      } else if (line.startsWith('var ') || line.startsWith('const ')) {
+        if (currentSection) {
+          sections.push({ content: currentSection.trim(), type: currentType });
+        }
+        currentSection = line;
+        currentType = 'variable';
+      } else {
+        currentSection += '\n' + line;
+      }
+    }
+
+    if (currentSection) {
+      sections.push({ content: currentSection.trim(), type: currentType });
+    }
+
+    return sections;
+  }
+
+  private parsePythonDoc(doc: string): Array<{ content: string; type: string }> {
+    const sections: Array<{ content: string; type: string }> = [];
+    let currentSection = '';
+    let currentType = 'description';
+
+    const lines = doc.split('\n');
+    for (const line of lines) {
+      if (line.startsWith('class ')) {
+        if (currentSection) {
+          sections.push({ content: currentSection.trim(), type: currentType });
+        }
+        currentSection = line;
+        currentType = 'class';
+      } else if (line.startsWith('def ')) {
+        if (currentSection) {
+          sections.push({ content: currentSection.trim(), type: currentType });
+        }
+        currentSection = line;
+        currentType = 'function';
+      } else if (line.match(/^[A-Z_]+\s*=/)) {
+        if (currentSection) {
+          sections.push({ content: currentSection.trim(), type: currentType });
+        }
+        currentSection = line;
+        currentType = 'constant';
+      } else {
+        currentSection += '\n' + line;
+      }
+    }
+
+    if (currentSection) {
+      sections.push({ content: currentSection.trim(), type: currentType });
+    }
+
+    return sections;
+  }
+
+  private parseNpmDoc(data: any): Array<{ content: string; type: string }> {
+    const sections: Array<{ content: string; type: string }> = [];
+
+    // Add package description
+    if (data.description) {
+      sections.push({
+        content: data.description,
+        type: 'description'
+      });
+    }
+
+    // Parse README into sections
+    if (data.readme) {
+      const readmeSections = data.readme.split(/(?=^#+ )/m);
+      for (const section of readmeSections) {
+        const lines = section.split('\n');
+        const heading = lines[0];
+        const content = lines.slice(1).join('\n').trim();
+
+        if (content) {
+          let type = 'general';
+          const lowerHeading = heading.toLowerCase();
+
+          if (lowerHeading.includes('install')) type = 'installation';
+          else if (lowerHeading.includes('usage') || lowerHeading.includes('api')) type = 'usage';
+          else if (lowerHeading.includes('example')) type = 'example';
+          else if (lowerHeading.includes('config')) type = 'configuration';
+
+          sections.push({
+            content: `${heading}\n${content}`,
+            type
+          });
+        }
+      }
+    }
+
+    return sections;
+  }
+
+  private extractSymbol(text: string, language: string): string | undefined {
+    const firstLine = text.split('\n')[0];
+    switch (language) {
+      case "go":
+        const goMatch = firstLine.match(/^(func|type|var|const)\s+(\w+)/);
+        return goMatch?.[2];
+      case "python":
+        const pyMatch = firstLine.match(/^(class|def)\s+(\w+)/);
+        return pyMatch?.[2];
+      case "npm":
+        // Extract symbol from markdown headings or code blocks
+        const npmMatch = firstLine.match(/^#+\s*(?:`([^`]+)`|(\w+))/);
+        return npmMatch?.[1] || npmMatch?.[2];
+      default:
+        return undefined;
+    }
+  }
+
   private setupToolHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       // Define the main tools
@@ -700,6 +848,18 @@ help(${packageName})
               projectPath: {
                 type: "string",
                 description: "Optional path to project directory for local .npmrc files"
+              },
+              section: {
+                type: "string",
+                description: "Optional section to retrieve (e.g. 'installation', 'api', 'examples')"
+              },
+              maxLength: {
+                type: "number",
+                description: "Optional maximum length of the returned documentation"
+              },
+              query: {
+                type: "string",
+                description: "Optional search query to filter documentation content"
               }
             },
             required: ["package"],
@@ -904,1098 +1064,835 @@ help(${packageName})
       }
 
       // Handle regular package documentation tools
-      const cacheKey = JSON.stringify(request.params);
+      const cacheKey = JSON.stringify({
+        name: request.params.name,
+        args: request.params.arguments,
+      });
+
+      // Check cache first
       const cachedResult = this.cache.get(cacheKey);
       if (cachedResult) {
+        this.logger.info(`Cache hit for ${request.params.name}`);
         return {
           content: [
-            { type: "text", text: JSON.stringify(cachedResult, null, 2) },
+            {
+              type: "text",
+              text: JSON.stringify(cachedResult),
+            },
           ],
         };
       }
 
-      let result: DocResult;
+      try {
+        let result: DocResult | undefined;
 
-      switch (request.params.name) {
-        case "search_package_docs":
-          if (!isSearchDocArgs(request.params.arguments)) {
-            throw new McpError(
-              ErrorCode.InvalidParams,
-              "Invalid arguments for package documentation search"
-            );
-          }
-          result = {
-            searchResults: await this.searchPackageDocs(
-              request.params.arguments.package,
-              request.params.arguments.query,
-              request.params.arguments.language,
-              request.params.arguments.fuzzy,
-              request.params.arguments.projectPath
-            )
-          };
-          break;
-        // New function names
-        case "describe_go_package":
-          if (!isGoDocArgs(request.params.arguments)) {
-            throw new McpError(
-              ErrorCode.InvalidParams,
-              "Invalid arguments for Go package description",
-            );
-          }
-          result = await this.describeGoPackage(
-            request.params.arguments.package,
-            request.params.arguments.symbol,
-            request.params.arguments.projectPath
-          );
-          break;
-        case "describe_python_package":
-          if (!isPythonDocArgs(request.params.arguments)) {
-            throw new McpError(
-              ErrorCode.InvalidParams,
-              "Invalid arguments for Python package description",
-            );
-          }
-          result = await this.describePythonPackage(
-            request.params.arguments.package,
-            request.params.arguments.symbol,
-            request.params.arguments.projectPath
-          );
-          break;
-        case "describe_npm_package":
-          if (!isNpmDocArgs(request.params.arguments)) {
-            throw new McpError(
-              ErrorCode.InvalidParams,
-              "Invalid arguments for NPM package description",
-            );
-          }
-          result = await this.describeNpmPackage(
-            request.params.arguments.package,
-            request.params.arguments.version,
-            request.params.arguments.projectPath
-          );
-          break;
-        case "get_npm_package_doc":
-          if (!isNpmDocArgs(request.params.arguments)) {
-            throw new McpError(
-              ErrorCode.InvalidParams,
-              "Invalid arguments for NPM package documentation",
-            );
-          }
-          result = await this.getNpmPackageDoc(
-            request.params.arguments.package,
-            request.params.arguments.version,
-            request.params.arguments.projectPath
-          );
-          break;
-        // Legacy function names for backward compatibility
-        case "lookup_go_doc":
-          this.logger.info("Using deprecated function name 'lookup_go_doc', please use 'describe_go_package' instead");
-          if (!isGoDocArgs(request.params.arguments)) {
-            throw new McpError(
-              ErrorCode.InvalidParams,
-              "Invalid arguments for Go package description",
-            );
-          }
-          result = await this.describeGoPackage(
-            request.params.arguments.package,
-            request.params.arguments.symbol,
-            request.params.arguments.projectPath
-          );
-          break;
-        case "lookup_python_doc":
-          this.logger.info("Using deprecated function name 'lookup_python_doc', please use 'describe_python_package' instead");
-          if (!isPythonDocArgs(request.params.arguments)) {
-            throw new McpError(
-              ErrorCode.InvalidParams,
-              "Invalid arguments for Python package description",
-            );
-          }
-          result = await this.describePythonPackage(
-            request.params.arguments.package,
-            request.params.arguments.symbol,
-            request.params.arguments.projectPath
-          );
-          break;
-        case "lookup_npm_doc":
-          this.logger.info("Using deprecated function name 'lookup_npm_doc', please use 'describe_npm_package' instead");
-          if (!isNpmDocArgs(request.params.arguments)) {
-            throw new McpError(
-              ErrorCode.InvalidParams,
-              "Invalid arguments for NPM package description",
-            );
-          }
-          result = await this.describeNpmPackage(
-            request.params.arguments.package,
-            request.params.arguments.version,
-            request.params.arguments.projectPath
-          );
-          break;
-        default:
-          throw new McpError(
-            ErrorCode.MethodNotFound,
-            `Unknown tool: ${request.params.name}`,
-          );
-      }
+        switch (request.params.name) {
+          case "search_package_docs":
+            if (!isSearchDocArgs(request.params.arguments)) {
+              throw new McpError(
+                ErrorCode.InvalidParams,
+                "Invalid search_package_docs arguments"
+              );
+            }
+            result = await this.searchPackageDocs(request.params.arguments);
+            break;
 
-      // Check if we need to suggest package installation
-      if (result.suggestInstall || (result.searchResults?.suggestInstall)) {
-        const packageName =
-          request.params.name === "search_package_docs" ?
-            (request.params.arguments as SearchDocArgs).package :
-            request.params.name === "describe_go_package" ?
-              (request.params.arguments as GoDocArgs).package :
-              request.params.name === "describe_python_package" ?
-                (request.params.arguments as PythonDocArgs).package :
-                request.params.name === "describe_npm_package" || request.params.name === "get_npm_package_doc" ?
-                  (request.params.arguments as NpmDocArgs).package :
-                  "unknown";
+          case "describe_go_package":
+          case "lookup_go_doc":
+            if (!isGoDocArgs(request.params.arguments)) {
+              throw new McpError(
+                ErrorCode.InvalidParams,
+                "Invalid describe_go_package arguments"
+              );
+            }
+            result = await this.describeGoPackage(request.params.arguments);
+            break;
 
-        const language =
-          request.params.name === "search_package_docs" ?
-            (request.params.arguments as SearchDocArgs).language :
-            request.params.name === "describe_go_package" ?
-              "go" :
-              request.params.name === "describe_python_package" ?
-                "python" :
-                request.params.name === "describe_npm_package" || request.params.name === "get_npm_package_doc" ?
-                  "npm" :
-                  "unknown";
+          case "describe_python_package":
+          case "lookup_python_doc":
+            if (!isPythonDocArgs(request.params.arguments)) {
+              throw new McpError(
+                ErrorCode.InvalidParams,
+                "Invalid describe_python_package arguments"
+              );
+            }
+            result = await this.describePythonPackage(request.params.arguments);
+            break;
 
-        // Add installation instructions to the error message
-        const installCommand =
-          language === "go" ? `go get ${packageName}` :
-            language === "python" ? `pip install ${packageName}` :
-              language === "npm" ? `npm install ${packageName}` :
-                "unknown";
+          case "describe_npm_package":
+          case "lookup_npm_doc":
+            if (!isNpmDocArgs(request.params.arguments)) {
+              throw new McpError(
+                ErrorCode.InvalidParams,
+                "Invalid describe_npm_package arguments"
+              );
+            }
+            result = await this.describeNpmPackage(request.params.arguments);
+            break;
 
-        const installMessage = `Package '${packageName}' is not installed. Would you like to install it using '${installCommand}'?`;
+          case "get_npm_package_doc":
+            if (!isNpmDocArgs(request.params.arguments)) {
+              throw new McpError(
+                ErrorCode.InvalidParams,
+                "Invalid get_npm_package_doc arguments"
+              );
+            }
+            result = await this.getNpmPackageDoc(request.params.arguments);
+            break;
 
-        // Return the result with the installation suggestion
+          default:
+            throw new McpError(
+              ErrorCode.MethodNotFound,
+              `Unknown tool: ${request.params.name}`
+            );
+        }
+
+        // Cache the result
         this.cache.set(cacheKey, result);
+
         return {
           content: [
-            { type: "text", text: JSON.stringify(result, null, 2) },
-            { type: "text", text: installMessage }
+            {
+              type: "text",
+              text: JSON.stringify(result),
+            },
           ],
         };
-      } else {
-        // Normal response without installation suggestion
-        this.cache.set(cacheKey, result);
+      } catch (error) {
+        if (error instanceof McpError) {
+          throw error;
+        }
+
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        this.logger.error(`Error in ${request.params.name}:`, error);
+
         return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: `Error in ${request.params.name}: ${errorMessage}`,
+              }),
+            },
+          ],
+          isError: true,
         };
       }
     });
   }
 
-  private async describeGoPackage(
-    packageName: string,
-    symbol?: string,
-    projectPath?: string
-  ): Promise<DocResult> {
-    try {
-      const cmd = symbol
-        ? `go doc ${packageName}.${symbol}`
-        : `go doc ${packageName}`;
-      const { stdout } = await execAsync(cmd);
-
-      // Parse the go doc output into a structured format
-      const lines = stdout.split("\n");
-      const result: DocResult = {};
-
-      let section: "description" | "usage" | "example" = "description";
-      let content: string[] = [];
-
-      for (const line of lines) {
-        if (line.startsWith("func") || line.startsWith("type")) {
-          if (content.length > 0) {
-            result[section] = content.join("\n").trim();
-          }
-          section = "usage";
-          content = [line];
-        } else if (line.includes("Example")) {
-          if (content.length > 0) {
-            result[section] = content.join("\n").trim();
-          }
-          section = "example";
-          content = [];
-        } else {
-          content.push(line);
-        }
-      }
-
-      if (content.length > 0) {
-        result[section] = content.join("\n").trim();
-      }
-
-      return result;
-    } catch (error) {
-      // Remote documentation fetch failed, check if package is installed locally
-      this.logger.error(`Remote Go documentation fetch failed for ${packageName}: ${error}`);
-
-      try {
-        // Check if the package is installed locally
-        const isInstalled = await this.isGoPackageInstalledLocally(packageName, projectPath);
-
-        if (isInstalled) {
-          this.logger.info(`Package ${packageName} is installed locally, fetching local documentation`);
-          return await this.getLocalGoDoc(packageName, symbol, projectPath);
-        } else {
-          this.logger.error(`Package ${packageName} is not installed locally`);
-          // Package is not installed locally, suggest installation
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          return {
-            error: `Failed to fetch Go documentation: ${errorMessage}`,
-            suggestInstall: true
-          };
-        }
-      } catch (localError) {
-        // Both remote and local attempts failed
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        return {
-          error: `Failed to fetch Go documentation: ${errorMessage}`,
-        };
-      }
+  /**
+   * Handle LSP hover requests
+   */
+  private async handleGetHover(args: any) {
+    if (!this.lspClient) {
+      throw new McpError(ErrorCode.InternalError, "LSP client not initialized");
     }
-  }
 
-  private async describePythonPackage(
-    packageName: string,
-    symbol?: string,
-    projectPath?: string
-  ): Promise<DocResult> {
     try {
-      const pythonCode = symbol
-        ? `
-import ${packageName}
-help(${packageName}.${symbol})
-`
-        : `
-import ${packageName}
-help(${packageName})
-`;
+      const result = await this.lspClient.getHover(
+        args.languageId,
+        args.filePath,
+        args.content,
+        args.line,
+        args.character,
+        args.projectRoot
+      );
 
-      const { stdout } = await execAsync(`python3 -c "${pythonCode}"`);
-
-      // Parse the Python help output into a structured format
-      const lines = stdout.split("\n");
-      const result: DocResult = {};
-
-      let section: "description" | "usage" | "example" = "description";
-      let content: string[] = [];
-
-      for (const line of lines) {
-        if (line.startsWith("class") || line.startsWith("def")) {
-          if (content.length > 0) {
-            result[section] = content.join("\n").trim();
-          }
-          section = "usage";
-          content = [line];
-        } else if (line.includes("Examples:") || line.includes("Example:")) {
-          if (content.length > 0) {
-            result[section] = content.join("\n").trim();
-          }
-          section = "example";
-          content = [];
-        } else {
-          content.push(line);
-        }
-      }
-
-      if (content.length > 0) {
-        result[section] = content.join("\n").trim();
-      }
-
-      return result;
-    } catch (error) {
-      // Remote documentation fetch failed, check if package is installed locally
-      this.logger.error(`Remote Python documentation fetch failed for ${packageName}: ${error}`);
-
-      try {
-        // Check if the package is installed locally
-        const isInstalled = await this.isPythonPackageInstalledLocally(packageName, projectPath);
-
-        if (isInstalled) {
-          this.logger.info(`Package ${packageName} is installed locally, fetching local documentation`);
-          return await this.getLocalPythonDoc(packageName, symbol, projectPath);
-        } else {
-          this.logger.error(`Package ${packageName} is not installed locally`);
-          // Package is not installed locally, suggest installation
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          return {
-            error: `Failed to fetch Python documentation: ${errorMessage}`,
-            suggestInstall: true
-          };
-        }
-      } catch (localError) {
-        // Both remote and local attempts failed
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        return {
-          error: `Failed to fetch Python documentation: ${errorMessage}`,
-        };
-      }
-    }
-  }
-
-  private async describeNpmPackage(
-    packageName: string,
-    version?: string,
-    projectPath?: string
-  ): Promise<DocResult> {
-    const config = this.getRegistryConfigForPackage(packageName, projectPath);
-    try {
-      const packagePath = encodeURIComponent(packageName);
-      const url = `${config.registry}/${packagePath}${version ? `/${version}` : ""}`;
-
-      const headers: Record<string, string> = {};
-      if (config.token) {
-        headers.Authorization = `Bearer ${config.token}`;
-      }
-
-      const response = await axios.get(url, { headers });
-
-      const { description, readme } = response.data;
-      const result: DocResult = {
-        description,
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result),
+          },
+        ],
       };
-
-      if (readme) {
-        // Extract usage and examples from README
-        const sections = readme.split(/#+\s/);
-        for (const section of sections) {
-          const lower = section.toLowerCase();
-          if (
-            lower.startsWith("usage") ||
-            lower.startsWith("getting started")
-          ) {
-            result.usage = section.split("\n").slice(1).join("\n").trim();
-          } else if (lower.startsWith("example")) {
-            result.example = section.split("\n").slice(1).join("\n").trim();
-          }
-        }
-      }
-
-      return result;
     } catch (error) {
-      // Remote documentation fetch failed, check if package is installed locally
-      this.logger.error(`Remote NPM documentation fetch failed for ${packageName}: ${error}`);
-
-      let errorMessage = "Unknown error occurred";
-      let statusCode: number | undefined;
-
-      if (error instanceof AxiosError) {
-        statusCode = error.response?.status;
-        const responseData = error.response?.data;
-
-        if (statusCode === 404) {
-          errorMessage = `Package '${packageName}' not found. Please check:\n` +
-            `1. The package name is correct\n` +
-            `2. You have access to the package\n` +
-            `3. The registry URL is correct (current: ${config.registry})\n` +
-            `4. Authentication is properly configured in .npmrc`;
-        } else if (statusCode === 401 || statusCode === 403) {
-          errorMessage = `Authentication failed for package '${packageName}'.\n` +
-            `Please ensure your .npmrc contains valid authentication tokens for ${config.registry}`;
-        } else {
-          errorMessage = responseData?.message || error.message;
-        }
-      } else {
-        errorMessage = String(error);
-      }
-
-      try {
-        // Check if the package is installed locally
-        const isInstalled = this.isNpmPackageInstalledLocally(packageName, projectPath);
-
-        if (isInstalled) {
-          this.logger.info(`Package ${packageName} is installed locally, fetching local documentation`);
-          return this.getLocalNpmDoc(packageName, projectPath);
-        } else {
-          this.logger.error(`Package ${packageName} is not installed locally`);
-          // Package is not installed locally, suggest installation
-          return {
-            error: `Failed to fetch NPM documentation (${statusCode || 'unknown status'}): ${errorMessage}`,
-            suggestInstall: true
-          };
-        }
-      } catch (localError) {
-        // Both remote and local attempts failed
-        return {
-          error: `Failed to fetch NPM documentation (${statusCode || 'unknown status'}): ${errorMessage}`,
-        };
-      }
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error("Error in handleGetHover:", error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ error: `LSP hover error: ${errorMessage}` }),
+          },
+        ],
+        isError: true,
+      };
     }
   }
 
   /**
-   * Get full documentation for an NPM package
+   * Handle LSP completions requests
    */
-  private async getNpmPackageDoc(
-    packageName: string,
-    version?: string,
-    projectPath?: string
-  ): Promise<DocResult> {
-    const config = this.getRegistryConfigForPackage(packageName, projectPath);
+  private async handleGetCompletions(args: any) {
+    if (!this.lspClient) {
+      throw new McpError(ErrorCode.InternalError, "LSP client not initialized");
+    }
+
     try {
-      const packagePath = encodeURIComponent(packageName);
-      const url = `${config.registry}/${packagePath}${version ? `/${version}` : ""}`;
+      const result = await this.lspClient.getCompletions(
+        args.languageId,
+        args.filePath,
+        args.content,
+        args.line,
+        args.character,
+        args.projectRoot
+      );
 
-      const headers: Record<string, string> = {};
-      if (config.token) {
-        headers.Authorization = `Bearer ${config.token}`;
-      }
-
-      this.logger.info(`Fetching full documentation for NPM package ${packageName} from ${url}`);
-      const response = await axios.get(url, { headers });
-
-      const { description, readme, homepage, repository, author, license, version: pkgVersion } = response.data;
-
-      // Create a comprehensive documentation object
-      const result: DocResult = {
-        description: `# ${packageName}${pkgVersion ? ` v${pkgVersion}` : ''}\n\n${description || 'No description available'}\n\n`
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result),
+          },
+        ],
       };
-
-      // Add metadata section
-      let metadata = '## Package Information\n\n';
-      if (homepage) metadata += `- **Homepage**: ${homepage}\n`;
-      if (repository) {
-        if (typeof repository === 'string') {
-          metadata += `- **Repository**: ${repository}\n`;
-        } else if (repository.url) {
-          metadata += `- **Repository**: ${repository.url}\n`;
-        }
-      }
-      if (author) {
-        if (typeof author === 'string') {
-          metadata += `- **Author**: ${author}\n`;
-        } else if (author.name) {
-          metadata += `- **Author**: ${author.name}${author.email ? ` <${author.email}>` : ''}${author.url ? ` (${author.url})` : ''}\n`;
-        }
-      }
-      if (license) metadata += `- **License**: ${license}\n`;
-
-      result.usage = metadata;
-
-      // Add the full README content
-      if (readme) {
-        result.example = readme;
-      } else {
-        result.example = "No README content available for this package.";
-      }
-
-      return result;
     } catch (error) {
-      // Remote documentation fetch failed, check if package is installed locally
-      this.logger.error(`Remote NPM documentation fetch failed for ${packageName}: ${error}`);
-
-      let errorMessage = "Unknown error occurred";
-      let statusCode: number | undefined;
-
-      if (error instanceof AxiosError) {
-        statusCode = error.response?.status;
-        const responseData = error.response?.data;
-
-        if (statusCode === 404) {
-          errorMessage = `Package '${packageName}' not found. Please check:\n` +
-            `1. The package name is correct\n` +
-            `2. You have access to the package\n` +
-            `3. The registry URL is correct (current: ${config.registry})\n` +
-            `4. Authentication is properly configured in .npmrc`;
-        } else if (statusCode === 401 || statusCode === 403) {
-          errorMessage = `Authentication failed for package '${packageName}'.\n` +
-            `Please ensure your .npmrc contains valid authentication tokens for ${config.registry}`;
-        } else {
-          errorMessage = responseData?.message || error.message;
-        }
-      } else {
-        errorMessage = String(error);
-      }
-
-      try {
-        // Check if the package is installed locally
-        const isInstalled = this.isNpmPackageInstalledLocally(packageName, projectPath);
-
-        if (isInstalled) {
-          this.logger.info(`Package ${packageName} is installed locally, fetching local documentation`);
-
-          // Get local documentation with full README
-          try {
-            const basePath = projectPath || process.cwd();
-            const packagePath = join(basePath, "node_modules", packageName);
-            const packageJsonPath = join(packagePath, "package.json");
-            const readmePaths = [
-              join(packagePath, "README.md"),
-              join(packagePath, "readme.md"),
-              join(packagePath, "Readme.md"),
-              join(packagePath, "README.markdown"),
-              join(packagePath, "README")
-            ];
-
-            // Read package.json for metadata
-            const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
-            const { description, homepage, repository, author, license, version } = packageJson;
-
-            // Create a comprehensive documentation object
-            const result: DocResult = {
-              description: `# ${packageName}${version ? ` v${version}` : ''}\n\n${description || 'No description available'}\n\n`
-            };
-
-            // Add metadata section
-            let metadata = '## Package Information\n\n';
-            if (homepage) metadata += `- **Homepage**: ${homepage}\n`;
-            if (repository) {
-              if (typeof repository === 'string') {
-                metadata += `- **Repository**: ${repository}\n`;
-              } else if (repository.url) {
-                metadata += `- **Repository**: ${repository.url}\n`;
-              }
-            }
-            if (author) {
-              if (typeof author === 'string') {
-                metadata += `- **Author**: ${author}\n`;
-              } else if (author.name) {
-                metadata += `- **Author**: ${author.name}${author.email ? ` <${author.email}>` : ''}${author.url ? ` (${author.url})` : ''}\n`;
-              }
-            }
-            if (license) metadata += `- **License**: ${license}\n`;
-
-            result.usage = metadata;
-
-            // Find and read README for full documentation
-            let readme = null;
-            for (const readmePath of readmePaths) {
-              if (existsSync(readmePath)) {
-                readme = readFileSync(readmePath, "utf-8");
-                break;
-              }
-            }
-
-            if (readme) {
-              result.example = readme;
-            } else {
-              result.example = "No README content available for this package.";
-            }
-
-            return result;
-          } catch (localDocError) {
-            const errorMessage = localDocError instanceof Error ? localDocError.message : String(localDocError);
-            return {
-              error: `Failed to fetch local NPM documentation: ${errorMessage}`,
-            };
-          }
-        } else {
-          this.logger.error(`Package ${packageName} is not installed locally`);
-          // Package is not installed locally, suggest installation
-          return {
-            error: `Failed to fetch NPM documentation (${statusCode || 'unknown status'}): ${errorMessage}`,
-            suggestInstall: true
-          };
-        }
-      } catch (localError) {
-        // Both remote and local attempts failed
-        return {
-          error: `Failed to fetch NPM documentation (${statusCode || 'unknown status'}): ${errorMessage}`,
-        };
-      }
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error("Error in handleGetCompletions:", error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ error: `LSP completions error: ${errorMessage}` }),
+          },
+        ],
+        isError: true,
+      };
     }
   }
 
-  private async searchPackageDocs(
-    packageName: string,
-    query: string,
-    language: "go" | "python" | "npm",
-    fuzzy: boolean = true,
-    projectPath?: string
-  ): Promise<SearchResults> {
+  /**
+   * Handle LSP diagnostics requests
+   */
+  private async handleGetDiagnostics(args: any) {
+    if (!this.lspClient) {
+      throw new McpError(ErrorCode.InternalError, "LSP client not initialized");
+    }
+
     try {
-      let docSections: Array<{ content: string; type: string }> = [];
+      const result = await this.lspClient.getDiagnostics(
+        args.languageId,
+        args.filePath,
+        args.content,
+        args.projectRoot
+      );
 
-      try {
-        // First try to get documentation from remote sources
-        switch (language) {
-          case "go":
-            const { stdout: goDoc } = await execAsync(`go doc -all ${packageName}`);
-            docSections = this.parseGoDoc(goDoc);
-            break;
-          case "python":
-            const pythonCode = `
-import ${packageName}
-help(${packageName})
-`;
-            const { stdout: pythonDoc } = await execAsync(`python3 -c "${pythonCode}"`);
-            docSections = this.parsePythonDoc(pythonDoc);
-            break;
-          case "npm":
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result),
+          },
+        ],
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error("Error in handleGetDiagnostics:", error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ error: `LSP diagnostics error: ${errorMessage}` }),
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  /**
+   * Search for content within package documentation
+   * Optimized to return concise results to save LLM context
+   */
+  private async searchPackageDocs(args: SearchDocArgs): Promise<DocResult> {
+    const { package: packageName, query, language, fuzzy = true, projectPath } = args;
+    this.logger.info(`Searching ${language} package ${packageName} for "${query}"`);
+
+    try {
+      let docContent: string | Array<{ content: string; type: string }> = "";
+      let isInstalled = false;
+
+      // Check if package is installed locally first
+      switch (language) {
+        case "go":
+          isInstalled = await this.isGoPackageInstalledLocally(packageName, projectPath);
+          if (isInstalled) {
+            const localDoc = await this.getLocalGoDoc(packageName, undefined, projectPath);
+            if (!localDoc.error) {
+              docContent = this.parseGoDoc(
+                [localDoc.description, localDoc.usage, localDoc.example]
+                  .filter(Boolean)
+                  .join("\n\n")
+              );
+            }
+          } else {
+            // Fetch from pkg.go.dev
+            const { stdout } = await execAsync(`go doc ${packageName}`);
+            docContent = this.parseGoDoc(stdout);
+          }
+          break;
+
+        case "python":
+          isInstalled = await this.isPythonPackageInstalledLocally(packageName, projectPath);
+          if (isInstalled) {
+            const localDoc = await this.getLocalPythonDoc(packageName, undefined, projectPath);
+            if (!localDoc.error) {
+              docContent = this.parsePythonDoc(
+                [localDoc.description, localDoc.usage, localDoc.example]
+                  .filter(Boolean)
+                  .join("\n\n")
+              );
+            }
+          } else {
+            // Try to fetch from PyPI
+            const url = `https://pypi.org/pypi/${packageName}/json`;
+            const response = await axios.get(url);
+            if (response.data && response.data.info) {
+              docContent = [
+                { content: response.data.info.summary || "", type: "description" },
+                { content: response.data.info.description || "", type: "documentation" }
+              ];
+            }
+          }
+          break;
+
+        case "npm":
+          isInstalled = this.isNpmPackageInstalledLocally(packageName, projectPath);
+          if (isInstalled) {
+            const localDoc = this.getLocalNpmDoc(packageName, projectPath);
+            if (!localDoc.error) {
+              docContent = [
+                { content: localDoc.description || "", type: "description" },
+                { content: localDoc.usage || "", type: "usage" },
+                { content: localDoc.example || "", type: "example" }
+              ].filter(item => item.content);
+            }
+          } else {
+            // Fetch from npm registry
             const config = this.getRegistryConfigForPackage(packageName, projectPath);
-            const packagePath = encodeURIComponent(packageName);
-            const url = `${config.registry}/${packagePath}`;
-
             const headers: Record<string, string> = {};
             if (config.token) {
               headers.Authorization = `Bearer ${config.token}`;
             }
 
+            const url = `${config.registry}/${packageName}`;
             const response = await axios.get(url, { headers });
-            docSections = this.parseNpmDoc(response.data);
-            break;
-          default:
-            throw new Error(`Unsupported language: ${language}`);
-        }
-      } catch (remoteError) {
-        // Remote documentation fetch failed, check if package is installed locally
-        this.logger.error(`Remote documentation fetch failed for ${packageName}: ${remoteError}`);
-
-        let isInstalled = false;
-
-        // Check if the package is installed locally
-        switch (language) {
-          case "go":
-            isInstalled = await this.isGoPackageInstalledLocally(packageName, projectPath);
-            break;
-          case "python":
-            isInstalled = await this.isPythonPackageInstalledLocally(packageName, projectPath);
-            break;
-          case "npm":
-            isInstalled = this.isNpmPackageInstalledLocally(packageName, projectPath);
-            break;
-        }
-
-        if (isInstalled) {
-          this.logger.info(`Package ${packageName} is installed locally, fetching local documentation`);
-
-          // Get documentation from locally installed package
-          switch (language) {
-            case "go":
-              const { stdout: localGoDoc } = await execAsync(`go doc -all ${packageName}`);
-              docSections = this.parseGoDoc(localGoDoc);
-              break;
-            case "python":
-              const localPythonCode = `
-import ${packageName}
-help(${packageName})
-`;
-              const { stdout: localPythonDoc } = await execAsync(`python3 -c "${localPythonCode}"`);
-              docSections = this.parsePythonDoc(localPythonDoc);
-              break;
-            case "npm":
-              // For NPM, we need to manually parse the README from the local package
-              try {
-                const basePath = projectPath || process.cwd();
-                const packagePath = join(basePath, "node_modules", packageName);
-                const readmePaths = [
-                  join(packagePath, "README.md"),
-                  join(packagePath, "readme.md"),
-                  join(packagePath, "Readme.md"),
-                  join(packagePath, "README.markdown"),
-                  join(packagePath, "README")
-                ];
-
-                // Find and read README
-                for (const readmePath of readmePaths) {
-                  if (existsSync(readmePath)) {
-                    const readme = readFileSync(readmePath, "utf-8");
-
-                    // Create a simple data structure similar to what we'd get from the registry
-                    const packageJsonPath = join(packagePath, "package.json");
-                    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
-
-                    docSections = this.parseNpmDoc({
-                      description: packageJson.description,
-                      readme: readme
-                    });
-                    break;
-                  }
-                }
-              } catch (localNpmError) {
-                this.logger.error(`Failed to parse local NPM documentation: ${localNpmError}`);
-              }
-              break;
+            if (response.data) {
+              docContent = this.parseNpmDoc(response.data);
+            }
           }
-        } else {
-          // Package is not installed locally and remote fetch failed
-          const result: SearchResults = {
-            results: [],
-            totalResults: 0
+          break;
+      }
+
+      // If no content was found, return an error
+      if (!docContent || (Array.isArray(docContent) && docContent.length === 0)) {
+        return {
+          error: `No documentation found for ${packageName}`,
+          suggestInstall: !isInstalled
+        };
+      }
+
+      // Perform search on the documentation content
+      const searchResults: SearchResult[] = [];
+
+      if (Array.isArray(docContent)) {
+        // For structured content (array of sections)
+        if (fuzzy) {
+          // Use fuzzy search
+          const fuseOptions = {
+            includeScore: true,
+            threshold: 0.4,
+            keys: ['content']
           };
 
-          // Return empty results with a special error that will be handled by the caller
-          throw new McpError(
-            ErrorCode.InternalError,
-            `Failed to search documentation for ${packageName}. Package is not installed locally and remote fetch failed: ${remoteError instanceof Error ? remoteError.message : String(remoteError)}`
-          );
+          const fuse = new Fuse(docContent, fuseOptions);
+          const results = fuse.search(query);
+
+          for (const result of results) {
+            const section = result.item;
+            const symbol = this.extractSymbol(section.content, language);
+
+            // Limit context to save space
+            const lines = section.content.split('\n');
+            const firstLine = lines[0];
+            const contextLines = lines.slice(1, Math.min(lines.length, 6)).join('\n');
+
+            searchResults.push({
+              symbol,
+              match: firstLine,
+              context: contextLines.length > 0 ? contextLines : undefined,
+              score: result.score || 0,
+              type: section.type
+            });
+          }
+        } else {
+          // Use exact search
+          for (const section of docContent) {
+            if (section.content.toLowerCase().includes(query.toLowerCase())) {
+              const symbol = this.extractSymbol(section.content, language);
+
+              // Limit context to save space
+              const lines = section.content.split('\n');
+              const firstLine = lines[0];
+              const contextLines = lines.slice(1, Math.min(lines.length, 6)).join('\n');
+
+              searchResults.push({
+                symbol,
+                match: firstLine,
+                context: contextLines.length > 0 ? contextLines : undefined,
+                score: 0,
+                type: section.type
+              });
+            }
+          }
+        }
+      } else {
+        // For plain text content
+        const lines = docContent.split('\n');
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (fuzzy) {
+            // Simple fuzzy matching for plain text
+            if (this.fuzzyMatch(line, query)) {
+              const contextStart = Math.max(0, i - 2);
+              const contextEnd = Math.min(lines.length, i + 3);
+              const context = lines.slice(contextStart, contextEnd).join('\n');
+
+              searchResults.push({
+                match: line,
+                context,
+                score: 0
+              });
+            }
+          } else if (line.toLowerCase().includes(query.toLowerCase())) {
+            const contextStart = Math.max(0, i - 2);
+            const contextEnd = Math.min(lines.length, i + 3);
+            const context = lines.slice(contextStart, contextEnd).join('\n');
+
+            searchResults.push({
+              match: line,
+              context,
+              score: 0
+            });
+          }
         }
       }
 
-      if (docSections.length === 0) {
-        return {
-          results: [],
-          totalResults: 0
-        };
-      }
+      // Sort results by score (lower is better)
+      searchResults.sort((a, b) => a.score - b.score);
 
-      if (fuzzy) {
-        // Use Fuse.js for fuzzy searching with more lenient threshold
-        const fuse = new Fuse(docSections, {
-          includeScore: true,
-          threshold: 0.3, // Lower threshold to catch more matches
-          minMatchCharLength: 2,
-          keys: ['content'],
-          ignoreLocation: true
-        });
+      // Limit number of results to save space
+      const limitedResults = searchResults.slice(0, 10);
 
-        const searchResults = fuse.search(query);
-
-        return {
-          results: searchResults.map(result => {
-            const section = result.item;
-            const matchStart = section.content.toLowerCase().indexOf(query.toLowerCase());
-            let match = section.content;
-
-            // Extract a window of text around the match
-            if (matchStart !== -1) {
-              const start = Math.max(0, matchStart - 50);
-              const end = Math.min(section.content.length, matchStart + query.length + 100);
-              match = (start > 0 ? '...' : '') +
-                section.content.slice(start, end) +
-                (end < section.content.length ? '...' : '');
-            }
-
-            return {
-              match,
-              context: section.content,
-              score: 1 - (result.score || 0),
-              symbol: this.extractSymbol(section.content, language),
-              type: section.type
-            };
-          }),
-          totalResults: searchResults.length
-        };
-      } else {
-        // Use regular expression for exact matching with word boundaries
-        const regex = new RegExp(`\\b${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, "gi");
-        const matches = docSections.filter(section => regex.test(section.content));
-
-        return {
-          results: matches.map(section => {
-            const matchStart = section.content.toLowerCase().indexOf(query.toLowerCase());
-            let match = section.content;
-
-            if (matchStart !== -1) {
-              const start = Math.max(0, matchStart - 50);
-              const end = Math.min(section.content.length, matchStart + query.length + 100);
-              match = (start > 0 ? '...' : '') +
-                section.content.slice(start, end) +
-                (end < section.content.length ? '...' : '');
-            }
-
-            return {
-              match,
-              context: section.content,
-              score: 1,
-              symbol: this.extractSymbol(section.content, language),
-              type: section.type
-            };
-          }),
-          totalResults: matches.length
-        };
-      }
+      return {
+        searchResults: {
+          results: limitedResults,
+          totalResults: searchResults.length,
+          suggestInstall: !isInstalled && searchResults.length === 0
+        }
+      };
     } catch (error) {
-      // Check if the error message contains information about package not being installed
       const errorMessage = error instanceof Error ? error.message : String(error);
-      if (errorMessage.includes("not installed locally")) {
-        // Create a result with a special error message that indicates installation is needed
-        return {
+      this.logger.error(`Error searching ${language} package ${packageName}:`, error);
+      return {
+        error: `Failed to search documentation: ${errorMessage}`,
+        searchResults: {
           results: [],
           totalResults: 0,
-          error: errorMessage,
+          error: errorMessage
+        }
+      };
+    }
+  }
+
+  /**
+   * Simple fuzzy matching algorithm
+   */
+  private fuzzyMatch(text: string, pattern: string): boolean {
+    const textLower = text.toLowerCase();
+    const patternLower = pattern.toLowerCase();
+
+    let textIndex = 0;
+    let patternIndex = 0;
+
+    while (textIndex < text.length && patternIndex < pattern.length) {
+      if (textLower[textIndex] === patternLower[patternIndex]) {
+        patternIndex++;
+      }
+      textIndex++;
+    }
+
+    return patternIndex === pattern.length;
+  }
+
+  /**
+   * Get documentation for a Go package
+   * Optimized to return concise results to save LLM context
+   */
+  private async describeGoPackage(args: GoDocArgs): Promise<DocResult> {
+    const { package: packageName, symbol, projectPath } = args;
+    this.logger.info(`Getting Go documentation for ${packageName}${symbol ? `.${symbol}` : ""}`);
+
+    try {
+      // Check if package is installed locally first
+      const isInstalled = await this.isGoPackageInstalledLocally(packageName, projectPath);
+
+      if (isInstalled) {
+        this.logger.info(`Using local documentation for ${packageName}`);
+        return await this.getLocalGoDoc(packageName, symbol, projectPath);
+      }
+
+      // If not installed, try to fetch from pkg.go.dev
+      this.logger.info(`Fetching Go documentation for ${packageName} from pkg.go.dev`);
+
+      try {
+        const cmd = symbol
+          ? `go doc ${packageName}.${symbol}`
+          : `go doc ${packageName}`;
+        const { stdout } = await execAsync(cmd);
+
+        // Parse the output into a structured format
+        const lines = stdout.split("\n");
+        const result: DocResult = {};
+
+        let section: "description" | "usage" | "example" = "description";
+        let content: string[] = [];
+
+        for (const line of lines) {
+          if (line.startsWith("func") || line.startsWith("type")) {
+            if (content.length > 0) {
+              result[section] = content.join("\n").trim();
+            }
+            section = "usage";
+            content = [line];
+          } else if (line.includes("Example")) {
+            if (content.length > 0) {
+              result[section] = content.join("\n").trim();
+            }
+            section = "example";
+            content = [];
+          } else {
+            content.push(line);
+          }
+        }
+
+        if (content.length > 0) {
+          result[section] = content.join("\n").trim();
+        }
+
+        return result;
+      } catch (error) {
+        // If go doc command fails, suggest installation
+        return {
+          error: `Package ${packageName} not found. Try installing it with 'go get ${packageName}'`,
           suggestInstall: true
         };
       }
-
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to search documentation: ${errorMessage}`
-      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error getting Go documentation for ${packageName}:`, error);
+      return {
+        error: `Failed to fetch Go documentation: ${errorMessage}`
+      };
     }
   }
 
-  private parseGoDoc(doc: string): Array<{ content: string; type: string }> {
-    const sections: Array<{ content: string; type: string }> = [];
-    let currentSection = '';
-    let currentType = 'description';
+  /**
+   * Get documentation for a Python package
+   * Optimized to return concise results to save LLM context
+   */
+  private async describePythonPackage(args: PythonDocArgs): Promise<DocResult> {
+    const { package: packageName, symbol, projectPath } = args;
+    this.logger.info(`Getting Python documentation for ${packageName}${symbol ? `.${symbol}` : ""}`);
 
-    const lines = doc.split('\n');
-    for (const line of lines) {
-      if (line.startsWith('func ')) {
-        if (currentSection) {
-          sections.push({ content: currentSection.trim(), type: currentType });
+    try {
+      // Check if package is installed locally first
+      const isInstalled = await this.isPythonPackageInstalledLocally(packageName, projectPath);
+
+      if (isInstalled) {
+        this.logger.info(`Using local documentation for ${packageName}`);
+        return await this.getLocalPythonDoc(packageName, symbol, projectPath);
+      }
+
+      // If not installed, try to fetch from PyPI
+      this.logger.info(`Fetching Python documentation for ${packageName} from PyPI`);
+
+      try {
+        const url = `https://pypi.org/pypi/${packageName}/json`;
+        const response = await axios.get(url);
+
+        if (response.data && response.data.info) {
+          const result: DocResult = {
+            description: response.data.info.summary || "No description available"
+          };
+
+          // Add more detailed description if available, but limit size
+          if (response.data.info.description) {
+            // Truncate description to a reasonable length
+            const description = response.data.info.description;
+            result.usage = description.length > 1000
+              ? description.substring(0, 1000) + "... (truncated)"
+              : description;
+          }
+
+          return result;
+        } else {
+          return {
+            error: `No documentation found for ${packageName} on PyPI`,
+            suggestInstall: true
+          };
         }
-        currentSection = line;
-        currentType = 'function';
-      } else if (line.startsWith('type ')) {
-        if (currentSection) {
-          sections.push({ content: currentSection.trim(), type: currentType });
+      } catch (error) {
+        // If PyPI request fails, suggest installation
+        return {
+          error: `Package ${packageName} not found. Try installing it with 'pip install ${packageName}'`,
+          suggestInstall: true
+        };
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error getting Python documentation for ${packageName}:`, error);
+      return {
+        error: `Failed to fetch Python documentation: ${errorMessage}`
+      };
+    }
+  }
+
+  /**
+   * Get documentation for an NPM package
+   * Optimized to return concise results to save LLM context
+   */
+  private async describeNpmPackage(args: NpmDocArgs): Promise<DocResult> {
+    const { package: packageName, version, projectPath } = args;
+    this.logger.info(`Getting NPM documentation for ${packageName}${version ? `@${version}` : ""}`);
+
+    try {
+      // Check if package is installed locally first
+      const isInstalled = this.isNpmPackageInstalledLocally(packageName, projectPath);
+
+      if (isInstalled) {
+        this.logger.info(`Using local documentation for ${packageName}`);
+        return this.getLocalNpmDoc(packageName, projectPath);
+      }
+
+      // If not installed, fetch from npm registry
+      this.logger.info(`Fetching NPM documentation for ${packageName} from registry`);
+
+      try {
+        const config = this.getRegistryConfigForPackage(packageName, projectPath);
+        const headers: Record<string, string> = {};
+        if (config.token) {
+          headers.Authorization = `Bearer ${config.token}`;
         }
-        currentSection = line;
-        currentType = 'type';
-      } else if (line.startsWith('var ') || line.startsWith('const ')) {
-        if (currentSection) {
-          sections.push({ content: currentSection.trim(), type: currentType });
+
+        const versionSuffix = version ? `/${version}` : "";
+        const url = `${config.registry}/${packageName}${versionSuffix}`;
+
+        const response = await axios.get(url, { headers });
+
+        if (response.data) {
+          const result: DocResult = {
+            description: response.data.description || "No description available"
+          };
+
+          // Extract usage and examples from README if available, but limit size
+          if (response.data.readme) {
+            const readme = response.data.readme;
+            const sections = readme.split(/#+\s/);
+
+            for (const section of sections) {
+              const lower = section.toLowerCase();
+              if (lower.startsWith("usage") || lower.startsWith("getting started")) {
+                // Truncate usage section to a reasonable length
+                const usage = section.split("\n").slice(1).join("\n").trim();
+                result.usage = usage.length > 1000
+                  ? usage.substring(0, 1000) + "... (truncated)"
+                  : usage;
+              } else if (lower.startsWith("example")) {
+                // Truncate example section to a reasonable length
+                const example = section.split("\n").slice(1).join("\n").trim();
+                result.example = example.length > 1000
+                  ? example.substring(0, 1000) + "... (truncated)"
+                  : example;
+              }
+            }
+          }
+
+          return result;
+        } else {
+          return {
+            error: `No documentation found for ${packageName} in npm registry`,
+            suggestInstall: true
+          };
         }
-        currentSection = line;
-        currentType = 'variable';
+      } catch (error) {
+        if (axios.isAxiosError(error) && error.response?.status === 404) {
+          return {
+            error: `Package ${packageName} not found. Try installing it with 'npm install ${packageName}'`,
+            suggestInstall: true
+          };
+        }
+        throw error;
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error getting NPM documentation for ${packageName}:`, error);
+      return {
+        error: `Failed to fetch NPM documentation: ${errorMessage}`
+      };
+    }
+  }
+
+  /**
+   * Get full documentation for an NPM package
+   * Optimized to return concise results to save LLM context
+   */
+  private async getNpmPackageDoc(args: NpmDocArgs): Promise<DocResult> {
+    const { package: packageName, version, projectPath, section, maxLength = 10000, query } = args;
+    this.logger.info(`Getting full NPM documentation for ${packageName}${version ? `@${version}` : ""}`);
+
+    try {
+      // Check if package is installed locally first
+      const isInstalled = this.isNpmPackageInstalledLocally(packageName, projectPath);
+      let readme: string | undefined;
+      let packageInfo: any;
+
+      if (isInstalled) {
+        this.logger.info(`Using local documentation for ${packageName}`);
+        const basePath = projectPath || process.cwd();
+        const packagePath = join(basePath, "node_modules", packageName);
+        const packageJsonPath = join(packagePath, "package.json");
+
+        // Read package.json
+        packageInfo = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
+
+        // Try to find README
+        const readmePaths = [
+          join(packagePath, "README.md"),
+          join(packagePath, "readme.md"),
+          join(packagePath, "Readme.md"),
+          join(packagePath, "README.markdown"),
+          join(packagePath, "README")
+        ];
+
+        for (const readmePath of readmePaths) {
+          if (existsSync(readmePath)) {
+            readme = readFileSync(readmePath, "utf-8");
+            break;
+          }
+        }
       } else {
-        currentSection += '\n' + line;
+        // If not installed, fetch from npm registry
+        this.logger.info(`Fetching NPM documentation for ${packageName} from registry`);
+
+        const config = this.getRegistryConfigForPackage(packageName, projectPath);
+        const headers: Record<string, string> = {};
+        if (config.token) {
+          headers.Authorization = `Bearer ${config.token}`;
+        }
+
+        const versionSuffix = version ? `/${version}` : "";
+        const url = `${config.registry}/${packageName}${versionSuffix}`;
+
+        const response = await axios.get(url, { headers });
+        packageInfo = response.data;
+        readme = packageInfo.readme;
       }
-    }
 
-    if (currentSection) {
-      sections.push({ content: currentSection.trim(), type: currentType });
-    }
-
-    return sections;
-  }
-
-  private parsePythonDoc(doc: string): Array<{ content: string; type: string }> {
-    const sections: Array<{ content: string; type: string }> = [];
-    let currentSection = '';
-    let currentType = 'description';
-
-    const lines = doc.split('\n');
-    for (const line of lines) {
-      if (line.startsWith('class ')) {
-        if (currentSection) {
-          sections.push({ content: currentSection.trim(), type: currentType });
-        }
-        currentSection = line;
-        currentType = 'class';
-      } else if (line.startsWith('def ')) {
-        if (currentSection) {
-          sections.push({ content: currentSection.trim(), type: currentType });
-        }
-        currentSection = line;
-        currentType = 'function';
-      } else if (line.match(/^[A-Z_]+\s*=/)) {
-        if (currentSection) {
-          sections.push({ content: currentSection.trim(), type: currentType });
-        }
-        currentSection = line;
-        currentType = 'constant';
-      } else {
-        currentSection += '\n' + line;
+      if (!packageInfo) {
+        return {
+          error: `No documentation found for ${packageName}`,
+          suggestInstall: !isInstalled
+        };
       }
-    }
 
-    if (currentSection) {
-      sections.push({ content: currentSection.trim(), type: currentType });
-    }
+      // Build the result
+      const result: DocResult = {
+        description: packageInfo.description || "No description available"
+      };
 
-    return sections;
-  }
+      // Process README content
+      if (readme) {
+        // If a specific section is requested
+        if (section) {
+          const sectionRegex = new RegExp(`#+\\s+${section}`, "i");
+          const sections = readme.split(/#+\s/);
+          let sectionContent = "";
 
-  private parseNpmDoc(data: any): Array<{ content: string; type: string }> {
-    const sections: Array<{ content: string; type: string }> = [];
+          for (let i = 0; i < sections.length; i++) {
+            const sectionText = sections[i];
+            if (sectionRegex.test(sectionText) || sectionText.toLowerCase().startsWith(section.toLowerCase())) {
+              // Found the requested section
+              sectionContent = sectionText;
+              break;
+            }
+          }
 
-    // Add package description
-    if (data.description) {
-      sections.push({
-        content: data.description,
-        type: 'description'
-      });
-    }
+          if (sectionContent) {
+            result.usage = sectionContent.length > maxLength
+              ? sectionContent.substring(0, maxLength) + "... (truncated)"
+              : sectionContent;
+          } else {
+            result.error = `Section '${section}' not found in documentation`;
+          }
+        } else if (query) {
+          // If a search query is provided
+          const lines = readme.split('\n');
+          const matchingLines: string[] = [];
 
-    // Parse README into sections
-    if (data.readme) {
-      const readmeSections = data.readme.split(/(?=^#+ )/m);
-      for (const section of readmeSections) {
-        const lines = section.split('\n');
-        const heading = lines[0];
-        const content = lines.slice(1).join('\n').trim();
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i].toLowerCase().includes(query.toLowerCase())) {
+              const contextStart = Math.max(0, i - 2);
+              const contextEnd = Math.min(lines.length, i + 3);
+              matchingLines.push(...lines.slice(contextStart, contextEnd), "");
+            }
+          }
 
-        if (content) {
-          let type = 'general';
-          const lowerHeading = heading.toLowerCase();
-
-          if (lowerHeading.includes('install')) type = 'installation';
-          else if (lowerHeading.includes('usage') || lowerHeading.includes('api')) type = 'usage';
-          else if (lowerHeading.includes('example')) type = 'example';
-          else if (lowerHeading.includes('config')) type = 'configuration';
-
-          sections.push({
-            content: `${heading}\n${content}`,
-            type
-          });
+          if (matchingLines.length > 0) {
+            const content = matchingLines.join('\n');
+            result.usage = content.length > maxLength
+              ? content.substring(0, maxLength) + "... (truncated)"
+              : content;
+          } else {
+            result.error = `No matches found for '${query}' in documentation`;
+          }
+        } else {
+          // Return the full README, but truncated if necessary
+          result.usage = readme.length > maxLength
+            ? readme.substring(0, maxLength) + "... (truncated)"
+            : readme;
         }
       }
-    }
 
-    return sections;
-  }
-
-  private extractSymbol(text: string, language: string): string | undefined {
-    const firstLine = text.split('\n')[0];
-    switch (language) {
-      case "go":
-        const goMatch = firstLine.match(/^(func|type|var|const)\s+(\w+)/);
-        return goMatch?.[2];
-      case "python":
-        const pyMatch = firstLine.match(/^(class|def)\s+(\w+)/);
-        return pyMatch?.[2];
-      case "npm":
-        // Extract symbol from markdown headings or code blocks
-        const npmMatch = firstLine.match(/^#+\s*(?:`([^`]+)`|(\w+))/);
-        return npmMatch?.[1] || npmMatch?.[2];
-      default:
-        return undefined;
-    }
-  }
-
-  private async handleGetHover(args: any): Promise<any> {
-    if (!this.lspClient) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        "LSP functionality is not enabled"
-      );
-    }
-
-    const { languageId, filePath, content, line, character, projectRoot } = args;
-
-    try {
-      const hover = await this.lspClient.getHover(
-        languageId,
-        filePath,
-        content,
-        line,
-        character,
-        projectRoot
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: hover?.contents
-              ? JSON.stringify(hover.contents, null, 2)
-              : "No hover information available",
-          },
-        ],
-      };
+      return result;
     } catch (error) {
-      console.error("[handleGetHover] Request failed:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error getting full NPM documentation for ${packageName}:`, error);
       return {
-        content: [
-          {
-            type: "text",
-            text: `Failed to get hover information: ${error instanceof Error ? error.message : String(error)}`,
-          },
-        ],
-        isError: true,
+        error: `Failed to fetch NPM documentation: ${errorMessage}`
       };
     }
-  }
-
-  private async handleGetCompletions(args: any): Promise<any> {
-    if (!this.lspClient) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        "LSP functionality is not enabled"
-      );
-    }
-
-    const { languageId, filePath, content, line, character, projectRoot } = args;
-
-    try {
-      const completions = await this.lspClient.getCompletions(
-        languageId,
-        filePath,
-        content,
-        line,
-        character,
-        projectRoot
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: completions && completions.length > 0
-              ? JSON.stringify(completions, null, 2)
-              : "No completions available",
-          },
-        ],
-      };
-    } catch (error) {
-      console.error("[handleGetCompletions] Request failed:", error);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Failed to get completions: ${error instanceof Error ? error.message : String(error)}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-  }
-
-  private async handleGetDiagnostics(args: any): Promise<any> {
-    if (!this.lspClient) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        "LSP functionality is not enabled"
-      );
-    }
-
-    const { languageId, filePath, content, projectRoot } = args;
-
-    try {
-      const diagnostics = await this.lspClient.getDiagnostics(
-        languageId,
-        filePath,
-        content,
-        projectRoot
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: diagnostics && diagnostics.length > 0
-              ? JSON.stringify(diagnostics, null, 2)
-              : "No diagnostics available",
-          },
-        ],
-      };
-    } catch (error) {
-      console.error("[handleGetDiagnostics] Request failed:", error);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Failed to get diagnostics: ${error instanceof Error ? error.message : String(error)}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-  }
-
-  async run() {
-    // Log server startup information
-    this.logger.info(
-      "Package Docs MCP server running on stdio, version:",
-      packageJson.version,
-      this.lspEnabled ? "(LSP enabled)" : "(LSP disabled)"
-    );
-
-    // Initialize and connect the transport
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
   }
 }
 
-const server = new PackageDocsServer();
-server.run().catch(error => {
-  logger.error('Error running MCP server:', error);
+// Initialize and run the server
+async function main() {
+  try {
+    const server = new PackageDocsServer();
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    logger.info("Package docs MCP server running on stdio");
+  } catch (error) {
+    logger.error("Failed to start server:", error);
+    process.exit(1);
+  }
+}
+
+main().catch((error) => {
+  logger.error("Unhandled error:", error);
   process.exit(1);
 });
