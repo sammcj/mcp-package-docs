@@ -19,7 +19,8 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "inspector": "npx @modelcontextprotocol/inspector build/index.js",
     "bump": "npx -y standard-version --skip.tag && git add . ; git commit -m 'chore: bump version' ; git push",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "test": "node test-npm-docs.js"
   },
   "repository": {
     "type": "git",

@@ -511,12 +511,7 @@ export class PackageDocsServer {
                 "Invalid get_npm_package_doc arguments"
               );
             }
-            result = await this.npmDocsHandler.getNpmPackageDoc(
-              request.params.arguments,
-              this.registryUtils.getRegistryConfigForPackage.bind(this.registryUtils),
-              this.isNpmPackageInstalledLocally.bind(this),
-              this.getLocalNpmDoc.bind(this)
-            );
+            result = await this.getNpmPackageDoc(request.params.arguments);
             break;
 
           default:
@@ -1471,5 +1466,26 @@ help(${packageName})
         isError: true,
       };
     }
+  }
+
+  /**
+   * Get full documentation for an NPM package
+   * Enhanced to provide comprehensive information for LLMs
+   */
+  private async getNpmPackageDoc(args: NpmDocArgs): Promise<DocResult> {
+    // Set default values for includeTypes and includeExamples
+    const enhancedArgs: NpmDocArgs = {
+      ...args,
+      includeTypes: args.includeTypes !== undefined ? args.includeTypes : true,
+      includeExamples: args.includeExamples !== undefined ? args.includeExamples : true
+    };
+
+    // Use the NpmDocsHandler to get the documentation
+    return this.npmDocsHandler.getNpmPackageDoc(
+      enhancedArgs,
+      this.registryUtils.getRegistryConfigForPackage.bind(this.registryUtils),
+      this.isNpmPackageInstalledLocally.bind(this),
+      this.getLocalNpmDoc.bind(this)
+    );
   }
 }
