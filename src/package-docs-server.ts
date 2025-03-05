@@ -524,14 +524,43 @@ export class PackageDocsServer {
         // Cache the result
         this.cache.set(cacheKey, result);
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result),
-            },
-          ],
-        };
+        // For get_npm_package_doc, return the markdown content directly
+        if (request.params.name === "get_npm_package_doc") {
+          // Combine description, usage, and example into a single markdown document
+          let markdown = "";
+
+          if (result.description) {
+            markdown += `# ${request.params.arguments.package}\n\n${result.description}\n\n`;
+          }
+
+          if (result.usage) {
+            markdown += result.usage;
+          }
+
+          // Only add examples if they're not already included in usage
+          if (result.example && !result.usage?.includes(result.example)) {
+            markdown += `\n\n## Additional Examples\n\n${result.example}`;
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: markdown,
+              },
+            ],
+          };
+        } else {
+          // For other tools, return the result as JSON
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result),
+              },
+            ],
+          };
+        }
       } catch (error) {
         if (error instanceof McpError) {
           throw error;
@@ -1481,11 +1510,21 @@ help(${packageName})
     };
 
     // Use the NpmDocsHandler to get the documentation
-    return this.npmDocsHandler.getNpmPackageDoc(
+    const result = await this.npmDocsHandler.getNpmPackageDoc(
       enhancedArgs,
       this.registryUtils.getRegistryConfigForPackage.bind(this.registryUtils),
       this.isNpmPackageInstalledLocally.bind(this),
       this.getLocalNpmDoc.bind(this)
     );
+
+    // If there's API documentation, ensure it's only included as formatted markdown
+    // and remove the structured object to avoid cluttering the JSON response
+    if (result.apiDocumentation) {
+      // The API documentation should already be formatted in the usage field,
+      // so we can safely remove the structured object
+      delete result.apiDocumentation;
+    }
+
+    return result;
   }
 }
