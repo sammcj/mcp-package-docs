@@ -1,36 +1,36 @@
-import Fuse from "fuse.js";
-import { McpLogger } from './logger.js';
+import Fuse from "fuse.js"
+import { McpLogger } from './logger.js'
 
 export interface DocResult {
-  description?: string;
-  usage?: string;
-  example?: string;
-  error?: string;
-  searchResults?: SearchResults;
-  suggestInstall?: boolean; // Flag to indicate if we should suggest package installation
+  description?: string
+  usage?: string
+  example?: string
+  error?: string
+  searchResults?: SearchResults
+  suggestInstall?: boolean // Flag to indicate if we should suggest package installation
 }
 
 export interface SearchResults {
-  results: SearchResult[];
-  totalResults: number;
-  error?: string;
-  suggestInstall?: boolean;
+  results: SearchResult[]
+  totalResults: number
+  error?: string
+  suggestInstall?: boolean
 }
 
 export interface SearchResult {
-  symbol?: string;
-  match: string;
-  context?: string; // Make context optional to save space
-  score: number;
-  type?: string; // Type of the section (function, class, etc.)
+  symbol?: string
+  match: string
+  context?: string // Make context optional to save space
+  score: number
+  type?: string // Type of the section (function, class, etc.)
 }
 
 export interface SearchDocArgs {
-  package: string;
-  query: string;
-  language: "go" | "python" | "npm";
-  fuzzy?: boolean;
-  projectPath?: string;
+  package: string
+  query: string
+  language: "go" | "python" | "npm" | "swift"
+  fuzzy?: boolean
+  projectPath?: string
 }
 
 export const isSearchDocArgs = (args: unknown): args is SearchDocArgs => {
@@ -39,33 +39,39 @@ export const isSearchDocArgs = (args: unknown): args is SearchDocArgs => {
     args !== null &&
     typeof (args as SearchDocArgs).package === "string" &&
     typeof (args as SearchDocArgs).query === "string" &&
-    ["go", "python", "npm"].includes((args as SearchDocArgs).language) &&
+    ["go", "python", "npm", "swift"].includes((args as SearchDocArgs).language) &&
     (typeof (args as SearchDocArgs).fuzzy === "boolean" ||
       (args as SearchDocArgs).fuzzy === undefined) &&
     (typeof (args as SearchDocArgs).projectPath === "string" ||
       (args as SearchDocArgs).projectPath === undefined)
-  );
-};
+  )
+}
 
 export interface GoDocArgs {
-  package: string;
-  symbol?: string;
-  projectPath?: string;
+  package: string
+  symbol?: string
+  projectPath?: string
 }
 
 export interface PythonDocArgs {
-  package: string;
-  symbol?: string;
-  projectPath?: string;
+  package: string
+  symbol?: string
+  projectPath?: string
 }
 
 export interface NpmDocArgs {
-  package: string;
-  version?: string;
-  projectPath?: string;
-  section?: string;
-  maxLength?: number;
-  query?: string;
+  package: string
+  version?: string
+  projectPath?: string
+  section?: string
+  maxLength?: number
+  query?: string
+}
+
+export interface SwiftDocArgs {
+  package: string
+  symbol?: string
+  projectPath?: string
 }
 
 export const isGoDocArgs = (args: unknown): args is GoDocArgs => {
@@ -77,8 +83,20 @@ export const isGoDocArgs = (args: unknown): args is GoDocArgs => {
       (args as GoDocArgs).symbol === undefined) &&
     (typeof (args as GoDocArgs).projectPath === "string" ||
       (args as GoDocArgs).projectPath === undefined)
-  );
-};
+  )
+}
+
+export const isSwiftDocArgs = (args: unknown): args is SwiftDocArgs => {
+  return (
+    typeof args === "object" &&
+    args !== null &&
+    typeof (args as SwiftDocArgs).package === "string" &&
+    (typeof (args as SwiftDocArgs).symbol === "string" ||
+      (args as SwiftDocArgs).symbol === undefined) &&
+    (typeof (args as SwiftDocArgs).projectPath === "string" ||
+      (args as SwiftDocArgs).projectPath === undefined)
+  )
+}
 
 export const isPythonDocArgs = (args: unknown): args is PythonDocArgs => {
   return (
@@ -89,8 +107,8 @@ export const isPythonDocArgs = (args: unknown): args is PythonDocArgs => {
       (args as PythonDocArgs).symbol === undefined) &&
     (typeof (args as PythonDocArgs).projectPath === "string" ||
       (args as PythonDocArgs).projectPath === undefined)
-  );
-};
+  )
+}
 
 export const isNpmDocArgs = (args: unknown): args is NpmDocArgs => {
   return (
@@ -107,54 +125,57 @@ export const isNpmDocArgs = (args: unknown): args is NpmDocArgs => {
       (args as NpmDocArgs).maxLength === undefined) &&
     (typeof (args as NpmDocArgs).query === "string" ||
       (args as NpmDocArgs).query === undefined)
-  );
-};
+  )
+}
 
 export class SearchUtils {
-  private logger: McpLogger;
+  private logger: McpLogger
 
   constructor(logger: McpLogger) {
-    this.logger = logger.child('SearchUtils');
+    this.logger = logger.child('SearchUtils')
   }
 
   /**
    * Simple fuzzy matching algorithm
    */
   public fuzzyMatch(text: string, pattern: string): boolean {
-    const textLower = text.toLowerCase();
-    const patternLower = pattern.toLowerCase();
+    const textLower = text.toLowerCase()
+    const patternLower = pattern.toLowerCase()
 
-    let textIndex = 0;
-    let patternIndex = 0;
+    let textIndex = 0
+    let patternIndex = 0
 
     while (textIndex < text.length && patternIndex < pattern.length) {
       if (textLower[textIndex] === patternLower[patternIndex]) {
-        patternIndex++;
+        patternIndex++
       }
-      textIndex++;
+      textIndex++
     }
 
-    return patternIndex === pattern.length;
+    return patternIndex === pattern.length
   }
 
   /**
    * Extract symbol from text based on language
    */
   public extractSymbol(text: string, language: string): string | undefined {
-    const firstLine = text.split('\n')[0];
+    const firstLine = text.split('\n')[0]
     switch (language) {
       case "go":
-        const goMatch = firstLine.match(/^(func|type|var|const)\s+(\w+)/);
-        return goMatch?.[2];
+        const goMatch = firstLine.match(/^(func|type|var|const)\s+(\w+)/)
+        return goMatch?.[2]
       case "python":
-        const pyMatch = firstLine.match(/^(class|def)\s+(\w+)/);
-        return pyMatch?.[2];
+        const pyMatch = firstLine.match(/^(class|def)\s+(\w+)/)
+        return pyMatch?.[2]
       case "npm":
         // Extract symbol from markdown headings or code blocks
-        const npmMatch = firstLine.match(/^#+\s*(?:`([^`]+)`|(\w+))/);
-        return npmMatch?.[1] || npmMatch?.[2];
+        const npmMatch = firstLine.match(/^#+\s*(?:`([^`]+)`|(\w+))/)
+        return npmMatch?.[1] || npmMatch?.[2]
+      case "swift":
+        const swiftMatch = firstLine.match(/^(class|struct|enum|protocol|func|var|let)\s+(\w+)/)
+        return swiftMatch?.[2]
       default:
-        return undefined;
+        return undefined
     }
   }
 
@@ -162,107 +183,153 @@ export class SearchUtils {
    * Parse Go documentation into sections
    */
   public parseGoDoc(doc: string): Array<{ content: string; type: string }> {
-    const sections: Array<{ content: string; type: string }> = [];
-    let currentSection = '';
-    let currentType = 'description';
+    const sections: Array<{ content: string; type: string }> = []
+    let currentSection = ''
+    let currentType = 'description'
 
-    const lines = doc.split('\n');
+    const lines = doc.split('\n')
     for (const line of lines) {
       if (line.startsWith('func ')) {
         if (currentSection) {
-          sections.push({ content: currentSection.trim(), type: currentType });
+          sections.push({ content: currentSection.trim(), type: currentType })
         }
-        currentSection = line;
-        currentType = 'function';
+        currentSection = line
+        currentType = 'function'
       } else if (line.startsWith('type ')) {
         if (currentSection) {
-          sections.push({ content: currentSection.trim(), type: currentType });
+          sections.push({ content: currentSection.trim(), type: currentType })
         }
-        currentSection = line;
-        currentType = 'type';
+        currentSection = line
+        currentType = 'type'
       } else if (line.startsWith('var ') || line.startsWith('const ')) {
         if (currentSection) {
-          sections.push({ content: currentSection.trim(), type: currentType });
+          sections.push({ content: currentSection.trim(), type: currentType })
         }
-        currentSection = line;
-        currentType = 'variable';
+        currentSection = line
+        currentType = 'variable'
       } else {
-        currentSection += '\n' + line;
+        currentSection += '\n' + line
       }
     }
 
     if (currentSection) {
-      sections.push({ content: currentSection.trim(), type: currentType });
+      sections.push({ content: currentSection.trim(), type: currentType })
     }
 
-    return sections;
+    return sections
   }
 
   /**
    * Parse Python documentation into sections
    */
   public parsePythonDoc(doc: string): Array<{ content: string; type: string }> {
-    const sections: Array<{ content: string; type: string }> = [];
-    let currentSection = '';
-    let currentType = 'description';
+    const sections: Array<{ content: string; type: string }> = []
+    let currentSection = ''
+    let currentType = 'description'
 
-    const lines = doc.split('\n');
+    const lines = doc.split('\n')
     for (const line of lines) {
       if (line.startsWith('class ')) {
         if (currentSection) {
-          sections.push({ content: currentSection.trim(), type: currentType });
+          sections.push({ content: currentSection.trim(), type: currentType })
         }
-        currentSection = line;
-        currentType = 'class';
+        currentSection = line
+        currentType = 'class'
       } else if (line.startsWith('def ')) {
         if (currentSection) {
-          sections.push({ content: currentSection.trim(), type: currentType });
+          sections.push({ content: currentSection.trim(), type: currentType })
         }
-        currentSection = line;
-        currentType = 'function';
+        currentSection = line
+        currentType = 'function'
       } else if (line.match(/^[A-Z_]+\s*=/)) {
         if (currentSection) {
-          sections.push({ content: currentSection.trim(), type: currentType });
+          sections.push({ content: currentSection.trim(), type: currentType })
         }
-        currentSection = line;
-        currentType = 'constant';
+        currentSection = line
+        currentType = 'constant'
       } else {
-        currentSection += '\n' + line;
+        currentSection += '\n' + line
       }
     }
 
     if (currentSection) {
-      sections.push({ content: currentSection.trim(), type: currentType });
+      sections.push({ content: currentSection.trim(), type: currentType })
     }
 
-    return sections;
+    return sections
+  }
+
+  /**
+   * Parse Swift documentation into sections
+   */
+  public parseSwiftDoc(doc: string): Array<{ content: string; type: string }> {
+    const sections: Array<{ content: string; type: string }> = []
+    let currentSection = ''
+    let currentType = 'description'
+
+    const lines = doc.split('\n')
+    for (const line of lines) {
+      if (line.startsWith('class ') || line.startsWith('struct ') || line.startsWith('enum ') || line.startsWith('protocol ')) {
+        if (currentSection) {
+          sections.push({ content: currentSection.trim(), type: currentType })
+        }
+        currentSection = line
+        currentType = 'type'
+      } else if (line.startsWith('func ')) {
+        if (currentSection) {
+          sections.push({ content: currentSection.trim(), type: currentType })
+        }
+        currentSection = line
+        currentType = 'function'
+      } else if (line.startsWith('var ') || line.startsWith('let ')) {
+        if (currentSection) {
+          sections.push({ content: currentSection.trim(), type: currentType })
+        }
+        currentSection = line
+        currentType = 'property'
+      } else if (line.startsWith('extension ')) {
+        if (currentSection) {
+          sections.push({ content: currentSection.trim(), type: currentType })
+        }
+        currentSection = line
+        currentType = 'extension'
+      } else {
+        currentSection += '\n' + line
+      }
+    }
+
+    if (currentSection) {
+      sections.push({ content: currentSection.trim(), type: currentType })
+    }
+
+    return sections
   }
 
   /**
    * Parse NPM documentation into sections
    */
   public parseNpmDoc(data: any): Array<{ content: string; type: string }> {
-    const sections: Array<{ content: string; type: string }> = [];
+    const sections: Array<{ content: string; type: string }> = []
 
     // Add package description
     if (data.description) {
       sections.push({
         content: data.description,
         type: 'description'
-      });
+      })
     }
 
     // Parse README into sections
     if (data.readme) {
-      const readmeSections = data.readme.split(/(?=^#+ )/m);
+      const readmeSections = data.readme.split(/(?=^#+ )/m)
       for (const section of readmeSections) {
-        const lines = section.split('\n');
-        const heading = lines[0];
-        const content = lines.slice(1).join('\n').trim();
+        const lines = section.split('\n')
+        const heading = lines[0]
+        const content = lines.slice(1).join('\n').trim()
 
         if (content) {
           // Skip sections that are likely not useful for coding
-          const lowerHeading = heading.toLowerCase();
+          const lowerHeading = heading.toLowerCase()
           if (
             lowerHeading.includes('sponsor') ||
             lowerHeading.includes('author') ||
@@ -281,24 +348,24 @@ export class SearchUtils {
             continue
           }
 
-          let type = 'general';
-          if (lowerHeading.includes('install')) type = 'installation';
-          else if (lowerHeading.includes('usage') || lowerHeading.includes('api')) type = 'usage';
-          else if (lowerHeading.includes('example')) type = 'example';
-          else if (lowerHeading.includes('config')) type = 'configuration';
+          let type = 'general'
+          if (lowerHeading.includes('install')) type = 'installation'
+          else if (lowerHeading.includes('usage') || lowerHeading.includes('api')) type = 'usage'
+          else if (lowerHeading.includes('example')) type = 'example'
+          else if (lowerHeading.includes('config')) type = 'configuration'
           else if (lowerHeading.includes('method') || lowerHeading.includes('function')) type = 'api'
           else if (lowerHeading.includes('quick start')) type = 'quickstart'
-          else if (lowerHeading.includes('getting started')) type = 'quickstart';
+          else if (lowerHeading.includes('getting started')) type = 'quickstart'
 
           sections.push({
             content: `${heading}\n${content}`,
             type
-          });
+          })
         }
       }
     }
 
-    return sections;
+    return sections
   }
 
   /**
