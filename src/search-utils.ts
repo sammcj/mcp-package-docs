@@ -27,7 +27,7 @@ export interface SearchResult {
 export interface SearchDocArgs {
   package: string
   query: string
-  language: "go" | "python" | "npm" | "swift"
+  language: "go" | "python" | "npm" | "swift" | "rust"
   fuzzy?: boolean
   projectPath?: string
 }
@@ -38,7 +38,7 @@ export const isSearchDocArgs = (args: unknown): args is SearchDocArgs => {
     args !== null &&
     typeof (args as SearchDocArgs).package === "string" &&
     typeof (args as SearchDocArgs).query === "string" &&
-    ["go", "python", "npm", "swift"].includes((args as SearchDocArgs).language) &&
+    ["go", "python", "npm", "swift", "rust"].includes((args as SearchDocArgs).language) &&
     (typeof (args as SearchDocArgs).fuzzy === "boolean" ||
       (args as SearchDocArgs).fuzzy === undefined) &&
     (typeof (args as SearchDocArgs).projectPath === "string" ||

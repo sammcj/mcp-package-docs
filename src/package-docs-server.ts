@@ -685,6 +685,64 @@ help(${packageName})
 
       // Check if package is installed locally first
       switch (language) {
+        case "rust":
+          isInstalled = await this.isRustCrateInstalledLocally(packageName)
+          if (isInstalled) {
+            const localDoc = await this.getLocalRustDoc(packageName)
+            if (!localDoc.error) {
+              docContent = [
+                { content: localDoc.description || "", type: "description" },
+                { content: localDoc.usage || "", type: "usage" },
+                { content: localDoc.example || "", type: "example" }
+              ].filter(item => item.content)
+            }
+          } else {
+            // If not installed, try to fetch from docs.rs and crates.io
+            try {
+              // Get crate details from crates.io
+              const crateDetails = await this.rustDocsHandler.getCrateDetails(packageName)
+
+              // Get documentation from docs.rs
+              const documentation = await this.rustDocsHandler.getCrateDocumentation(packageName)
+
+              // Parse the documentation into sections
+              const sections = documentation.split(/#+\s+/m)
+
+              docContent = []
+
+              // Add description
+              if (crateDetails.description) {
+                docContent.push({
+                  content: crateDetails.description,
+                  type: "description"
+                })
+              }
+
+              // Process each section
+              for (const section of sections) {
+                if (!section.trim()) continue
+
+                const lines = section.split('\n')
+                const heading = lines[0].toLowerCase()
+                const content = lines.join('\n')
+
+                let type = "general"
+                if (heading.includes("example")) type = "example"
+                else if (heading.includes("usage") || heading.includes("getting started")) type = "usage"
+                else if (heading.includes("struct") || heading.includes("enum") || heading.includes("trait")) type = "type"
+                else if (heading.includes("function") || heading.includes("method")) type = "function"
+
+                docContent.push({ content, type })
+              }
+
+              // Add package metadata
+              packageInfo = crateDetails
+            } catch (error) {
+              this.logger.error(`Error fetching Rust documentation: ${error}`)
+            }
+          }
+          break
+
         case "go":
           isInstalled = await this.isGoPackageInstalledLocally(packageName, projectPath)
           if (isInstalled) {
