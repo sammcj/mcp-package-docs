@@ -8,15 +8,13 @@ import {
 } from "@modelcontextprotocol/sdk/types.js"
 import { exec } from "child_process"
 import { promisify } from "util"
-import axios, { AxiosError } from "axios"
+import axios from "axios"
 import { fileURLToPath } from "url"
 import { dirname, join } from "path"
 import { readFileSync, existsSync } from "fs"
-import { NodeHtmlMarkdown } from 'node-html-markdown'
-
 import { logger, McpLogger } from './logger.js'
 import { NpmDocsHandler, NpmDocArgs, isNpmDocArgs } from './npm-docs-integration.js'
-import { SearchUtils, DocResult, SearchDocArgs, GoDocArgs, PythonDocArgs, SwiftDocArgs, isSearchDocArgs, isGoDocArgs, isPythonDocArgs, isSwiftDocArgs, SearchResults } from './search-utils.js'
+import { SearchUtils, DocResult, SearchDocArgs, GoDocArgs, PythonDocArgs, SwiftDocArgs, isSearchDocArgs, isGoDocArgs, isPythonDocArgs, isSwiftDocArgs } from './search-utils.js'
 import Fuse from "fuse.js"
 import { RegistryUtils } from './registry-utils.js'
 import TypeScriptLspClient from "./lsp/typescript-lsp-client.js"
@@ -29,17 +27,6 @@ const packageJson = JSON.parse(
 
 const execAsync = promisify(exec)
 
-// Initialize HTML to Markdown converter with custom options
-const nhm = new NodeHtmlMarkdown({
-  // Configuration options for better Markdown output
-  useInlineLinks: true,
-  maxConsecutiveNewlines: 2,
-  bulletMarker: '-',
-  codeBlockStyle: 'fenced',
-  emDelimiter: '*',
-  strongDelimiter: '**',
-  keepDataImages: false
-})
 
 export class PackageDocsServer {
   private server: Server
@@ -85,8 +72,8 @@ export class PackageDocsServer {
       try {
         this.lspClient = new TypeScriptLspClient()
         this.logger.debug("TypeScript Language Server client initialized successfully")
-      } catch (error) {
-        this.logger.error("Failed to initialize TypeScript Language Server client:", error)
+      } catch {
+        this.logger.error("Failed to initialize TypeScript Language Server client")
         this.lspEnabled = false
       }
     } else {
@@ -446,11 +433,11 @@ export class PackageDocsServer {
       // Handle LSP tools if enabled
       if (this.lspEnabled && this.lspClient) {
         if (request.params.name === "get_hover") {
-          return await this.handleGetHover(request.params.arguments)
+          return await this.handleGetHover(request.params.arguments as { languageId: string; filePath: string; content: string; line: number; character: number; projectRoot: string })
         } else if (request.params.name === "get_completions") {
-          return await this.handleGetCompletions(request.params.arguments)
+          return await this.handleGetCompletions(request.params.arguments as { languageId: string; filePath: string; content: string; line: number; character: number; projectRoot: string })
         } else if (request.params.name === "get_diagnostics") {
-          return await this.handleGetDiagnostics(request.params.arguments)
+          return await this.handleGetDiagnostics(request.params.arguments as { languageId: string; filePath: string; content: string; projectRoot: string })
         }
       }
 
@@ -636,7 +623,7 @@ export class PackageDocsServer {
       // Try to find the package in GOPATH
       const { stdout } = await execAsync(`go list -f '{{.Dir}}' ${packageName}`)
       return !!stdout.trim()
-    } catch (error) {
+    } catch {
       // If the command fails, the package is likely not installed
       return false
     }
@@ -645,7 +632,7 @@ export class PackageDocsServer {
   /**
    * Check if a Python package is installed locally
    */
-  private async isPythonPackageInstalledLocally(packageName: string, projectPath?: string): Promise<boolean> {
+  private async isPythonPackageInstalledLocally(packageName: string): Promise<boolean> {
     try {
       // Check if we can import the package
       const pythonCode = `
@@ -656,7 +643,7 @@ print(spec is not None)
 `
       const { stdout } = await execAsync(`python3 -c "${pythonCode}"`)
       return stdout.trim() === "True"
-    } catch (error) {
+    } catch {
       return false
     }
   }
@@ -671,7 +658,7 @@ print(spec is not None)
       const packageJsonPath = join(basePath, "node_modules", packageName, "package.json")
 
       return existsSync(packageJsonPath)
-    } catch (error) {
+    } catch {
       return false
     }
   }
@@ -696,7 +683,7 @@ print(spec is not None)
       }
 
       return false
-    } catch (error) {
+    } catch {
       return false
     }
   }
@@ -704,7 +691,7 @@ print(spec is not None)
   /**
    * Get documentation from a locally installed Go package
    */
-  private async getLocalGoDoc(packageName: string, symbol?: string, projectPath?: string): Promise<DocResult> {
+  private async getLocalGoDoc(packageName: string, symbol?: string): Promise<DocResult> {
     try {
       const cmd = symbol
         ? `go doc ${packageName}.${symbol}`
@@ -753,7 +740,7 @@ print(spec is not None)
   /**
    * Get documentation from a locally installed Python package
    */
-  private async getLocalPythonDoc(packageName: string, symbol?: string, projectPath?: string): Promise<DocResult> {
+  private async getLocalPythonDoc(packageName: string, symbol?: string): Promise<DocResult> {
     try {
       const pythonCode = symbol
         ? `
@@ -883,7 +870,7 @@ help(${packageName})
         return {
           description: stdout.trim()
         }
-      } catch (docError) {
+      } catch {
         // If swift-doc fails, try to extract info from Package.swift
         const packageSwiftPath = projectPath ? join(projectPath, "Package.swift") : "Package.swift"
         if (existsSync(packageSwiftPath)) {
@@ -958,7 +945,7 @@ help(${packageName})
 
       // Remove .git extension if present
       return lastPart.replace(/\.git$/, '')
-    } catch (error) {
+    } catch {
       // If the URL is invalid, try to extract the name from the string
       const parts = url.split('/')
       const lastPart = parts[parts.length - 1]
@@ -978,6 +965,7 @@ help(${packageName})
     try {
       let docContent: string | Array<{ content: string; type: string }> = ""
       let isInstalled = false
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let packageInfo: any = null
 
       // Check if package is installed locally first
@@ -985,7 +973,7 @@ help(${packageName})
         case "go":
           isInstalled = await this.isGoPackageInstalledLocally(packageName, projectPath)
           if (isInstalled) {
-            const localDoc = await this.getLocalGoDoc(packageName, undefined, projectPath)
+            const localDoc = await this.getLocalGoDoc(packageName, undefined)
             if (!localDoc.error) {
               docContent = this.searchUtils.parseGoDoc(
                 [localDoc.description, localDoc.usage, localDoc.example]
@@ -998,7 +986,7 @@ help(${packageName})
             try {
               const { stdout } = await execAsync(`go doc ${packageName}`)
               docContent = this.searchUtils.parseGoDoc(stdout)
-            } catch (error) {
+            } catch {
               // Try to get package info from go.dev API if available
               try {
                 const url = `https://pkg.go.dev/api/packages/${encodeURIComponent(packageName)}`
@@ -1020,9 +1008,9 @@ help(${packageName})
           break
 
         case "python":
-          isInstalled = await this.isPythonPackageInstalledLocally(packageName, projectPath)
+          isInstalled = await this.isPythonPackageInstalledLocally(packageName)
           if (isInstalled) {
-            const localDoc = await this.getLocalPythonDoc(packageName, undefined, projectPath)
+            const localDoc = await this.getLocalPythonDoc(packageName, undefined)
             if (!localDoc.error) {
               docContent = this.searchUtils.parsePythonDoc(
                 [localDoc.description, localDoc.usage, localDoc.example]
@@ -1244,6 +1232,7 @@ help(${packageName})
       }
 
       // Perform search on the documentation content
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const searchResults: any[] = []
 
       if (Array.isArray(docContent)) {
@@ -1475,7 +1464,7 @@ help(${packageName})
   /**
    * Handle LSP hover requests
    */
-  private async handleGetHover(args: any) {
+  private async handleGetHover(args: { languageId: string; filePath: string; content: string; line: number; character: number; projectRoot: string }) {
     if (!this.lspClient) {
       throw new McpError(ErrorCode.InternalError, "LSP client not initialized")
     }
@@ -1516,7 +1505,7 @@ help(${packageName})
   /**
    * Handle LSP completions requests
    */
-  private async handleGetCompletions(args: any) {
+  private async handleGetCompletions(args: { languageId: string; filePath: string; content: string; line: number; character: number; projectRoot: string }) {
     if (!this.lspClient) {
       throw new McpError(ErrorCode.InternalError, "LSP client not initialized")
     }
@@ -1557,7 +1546,7 @@ help(${packageName})
   /**
    * Handle LSP diagnostics requests
    */
-  private async handleGetDiagnostics(args: any) {
+  private async handleGetDiagnostics(args: { languageId: string; filePath: string; content: string; projectRoot: string }) {
     if (!this.lspClient) {
       throw new McpError(ErrorCode.InternalError, "LSP client not initialized")
     }
@@ -1607,7 +1596,7 @@ help(${packageName})
 
       if (isInstalled) {
         this.logger.debug(`Using local documentation for ${packageName}`)
-        return await this.getLocalGoDoc(packageName, symbol, projectPath)
+        return await this.getLocalGoDoc(packageName, symbol)
       }
 
       // If not installed, try to fetch from pkg.go.dev
@@ -1649,7 +1638,7 @@ help(${packageName})
         }
 
         return result
-      } catch (error) {
+      } catch {
         // If go doc command fails, suggest installation
         return {
           error: `Package ${packageName} not found. Try installing it with 'go get ${packageName}'`,
@@ -1670,16 +1659,16 @@ help(${packageName})
    * Optimized to return concise results to save LLM context
    */
   private async describePythonPackage(args: PythonDocArgs): Promise<DocResult> {
-    const { package: packageName, symbol, projectPath } = args
+    const { package: packageName, symbol } = args
     this.logger.debug(`Getting Python documentation for ${packageName}${symbol ? `.${symbol}` : ""}`)
 
     try {
       // Check if package is installed locally first
-      const isInstalled = await this.isPythonPackageInstalledLocally(packageName, projectPath)
+      const isInstalled = await this.isPythonPackageInstalledLocally(packageName)
 
       if (isInstalled) {
         this.logger.debug(`Using local documentation for ${packageName}`)
-        return await this.getLocalPythonDoc(packageName, symbol, projectPath)
+        return await this.getLocalPythonDoc(packageName, symbol)
       }
 
       // If not installed, try to fetch from PyPI
@@ -1710,7 +1699,7 @@ help(${packageName})
             suggestInstall: true
           }
         }
-      } catch (error) {
+      } catch {
         // If PyPI request fails, suggest installation
         return {
           error: `Package ${packageName} not found. Try installing it with 'pip install ${packageName}'`,
@@ -1813,7 +1802,7 @@ help(${packageName})
             `\`\`\``,
           suggestInstall: true
         }
-      } catch (error) {
+      } catch {
         // If fetching fails, suggest installation
         return {
           error: `Package ${packageUrl} not found. Try adding it to your Package.swift.`,
