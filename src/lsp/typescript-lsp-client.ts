@@ -45,10 +45,10 @@ async function commandExists(command: string): Promise<boolean> {
 // Helper function to install a package using npm
 async function installPackage(packageName: string): Promise<void> {
   try {
-    logger.info(`Installing ${packageName}...`);
+    logger.debug(`Installing ${packageName}...`);
     const exec = promisify(childProcess.exec);
     await exec(`npm install --no-save ${packageName}`);
-    logger.info(`Successfully installed ${packageName}`);
+    logger.debug(`Successfully installed ${packageName}`);
   } catch (error) {
     logger.error(`Failed to install ${packageName}:`, error);
     throw error;
@@ -77,7 +77,7 @@ export class TypeScriptLspClient {
   }
 
   private async getLanguageServerConfig(languageId: string): Promise<LanguageServerConfig | undefined> {
-    this.logger.info(`Getting config for ${languageId}`);
+    this.logger.debug(`Getting config for ${languageId}`);
 
     // Default configurations for common language servers
     const defaultConfigs: Record<string, LanguageServerConfig> = {
@@ -105,13 +105,13 @@ export class TypeScriptLspClient {
 
     // Check if there's an environment variable override
     const configStr = process.env[`${languageId.toUpperCase()}_SERVER`];
-    this.logger.info(`Raw config for ${languageId}:`, configStr);
+    this.logger.debug(`Raw config for ${languageId}:`, configStr);
 
     if (configStr) {
       try {
         // Try to parse the environment variable configuration
         const config = JSON.parse(configStr);
-        this.logger.info(`Using custom config for ${languageId}:`, config);
+        this.logger.debug(`Using custom config for ${languageId}:`, config);
         return config;
       } catch (error) {
         if (error instanceof Error) {
@@ -120,14 +120,14 @@ export class TypeScriptLspClient {
           this.logger.error(`Invalid config for ${languageId}:`, error);
         }
         // Fall back to default if parsing fails
-        this.logger.info(`Falling back to default config for ${languageId}`);
+        this.logger.debug(`Falling back to default config for ${languageId}`);
       }
     }
 
     // Get default config
     const defaultConfig = defaultConfigs[languageId.toLowerCase()];
     if (!defaultConfig) {
-      this.logger.info(`No config found for ${languageId}`);
+      this.logger.debug(`No config found for ${languageId}`);
       return undefined;
     }
 
@@ -136,7 +136,7 @@ export class TypeScriptLspClient {
     const commandAvailable = await commandExists(commandName);
 
     if (!commandAvailable) {
-      this.logger.info(`Command ${commandName} not found, attempting to install...`);
+      this.logger.debug(`Command ${commandName} not found, attempting to install...`);
 
       // Map language server commands to npm packages
       const packageMap: Record<string, string> = {
@@ -150,7 +150,7 @@ export class TypeScriptLspClient {
       if (packageToInstall) {
         try {
           await installPackage(packageToInstall);
-          this.logger.info(`Successfully installed ${packageToInstall}`);
+          this.logger.debug(`Successfully installed ${packageToInstall}`);
 
           // For locally installed packages, use npx to run them
           return {
@@ -163,16 +163,16 @@ export class TypeScriptLspClient {
       }
     }
 
-    this.logger.info(`Using default config for ${languageId}`);
+    this.logger.debug(`Using default config for ${languageId}`);
     return defaultConfig;
   }
 
   public async getOrCreateServer(languageId: string, projectRoot?: string): Promise<LanguageServerInstance> {
     const serverKey = this.getServerKey(languageId, projectRoot);
-    this.logger.info(`Request for ${serverKey}`);
+    this.logger.debug(`Request for ${serverKey}`);
 
     if (this.languageServers.has(serverKey)) {
-      this.logger.info(`Returning existing ${serverKey} server`);
+      this.logger.debug(`Returning existing ${serverKey} server`);
       return this.languageServers.get(serverKey)!;
     }
 
@@ -181,7 +181,7 @@ export class TypeScriptLspClient {
       throw new Error(`No language server configured for ${languageId}`);
     }
 
-    this.logger.info(`Spawning ${serverKey} server:`, config);
+    this.logger.debug(`Spawning ${serverKey} server:`, config);
     const serverProcess = childProcess.spawn(config.command, config.args);
 
     serverProcess.on('error', (error) => {
@@ -193,7 +193,7 @@ export class TypeScriptLspClient {
     });
 
     // Create message connection
-    this.logger.info(`Creating message connection for ${serverKey}`);
+    this.logger.debug(`Creating message connection for ${serverKey}`);
     const connection = createMessageConnection(
       new StreamMessageReader(serverProcess.stdout),
       new StreamMessageWriter(serverProcess.stdin)
@@ -212,11 +212,11 @@ export class TypeScriptLspClient {
     const actualRoot = projectRoot && existsSync(projectRoot) ? projectRoot : process.cwd();
 
     // Initialize connection
-    this.logger.info(`Starting connection for ${serverKey}`);
+    this.logger.debug(`Starting connection for ${serverKey}`);
     connection.listen();
 
     // Initialize language server
-    this.logger.info(`Initializing ${serverKey} server`);
+    this.logger.debug(`Initializing ${serverKey} server`);
     try {
       const initializeResult = await connection.sendRequest('initialize', {
         processId: process.pid,
@@ -291,9 +291,9 @@ export class TypeScriptLspClient {
         initializationOptions: null,
       } as InitializeParams);
 
-      this.logger.info(`Initialize result for ${serverKey}:`, initializeResult);
+      this.logger.debug(`Initialize result for ${serverKey}:`, initializeResult);
       await connection.sendNotification('initialized');
-      this.logger.info(`Sent initialized notification for ${serverKey}`);
+      this.logger.debug(`Sent initialized notification for ${serverKey}`);
 
       // Optional: send workspace configuration changes if needed
       if (languageId === 'typescript') {
@@ -331,7 +331,7 @@ export class TypeScriptLspClient {
 
     const server = { connection, process: serverProcess, workspaceRoot: actualRoot };
     this.languageServers.set(serverKey, server);
-    this.logger.info(`Successfully created ${serverKey} server`);
+    this.logger.debug(`Successfully created ${serverKey} server`);
     return server;
   }
 
@@ -343,7 +343,7 @@ export class TypeScriptLspClient {
     character: number,
     projectRoot?: string
   ): Promise<any> {
-    this.logger.info(`Processing hover request for ${languageId}`);
+    this.logger.debug(`Processing hover request for ${languageId}`);
 
     const server = await this.getOrCreateServer(languageId, projectRoot);
     const actualRoot = server.workspaceRoot;
@@ -392,7 +392,7 @@ export class TypeScriptLspClient {
     character: number,
     projectRoot?: string
   ): Promise<CompletionItem[]> {
-    this.logger.info(`Processing completions request for ${languageId}`);
+    this.logger.debug(`Processing completions request for ${languageId}`);
 
     const server = await this.getOrCreateServer(languageId, projectRoot);
     const actualRoot = server.workspaceRoot;
@@ -444,7 +444,7 @@ export class TypeScriptLspClient {
     content: string,
     projectRoot?: string
   ): Promise<any> {
-    this.logger.info(`Processing diagnostics request for ${languageId}`);
+    this.logger.debug(`Processing diagnostics request for ${languageId}`);
 
     const server = await this.getOrCreateServer(languageId, projectRoot);
     const actualRoot = server.workspaceRoot;
@@ -500,9 +500,9 @@ export class TypeScriptLspClient {
   }
 
   public cleanup(): void {
-    this.logger.info('Disposing language servers...');
+    this.logger.debug('Disposing language servers...');
     for (const [id, server] of this.languageServers.entries()) {
-      this.logger.info(`Disposing ${id} server...`);
+      this.logger.debug(`Disposing ${id} server...`);
       server.connection.dispose();
       server.process.kill();
     }
