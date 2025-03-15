@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.24](https://github.com/sammcj/mcp-package-docs/compare/v0.1.23...v0.1.24) (2025-03-15)
+
+
+### Features
+
+* initial support for rust ([#11](https://github.com/sammcj/mcp-package-docs/issues/11)) ([b9529c3](https://github.com/sammcj/mcp-package-docs/commit/b9529c397945b657f2fbaa258baa00df934375e4))
+
 ### [0.1.23](https://github.com/sammcj/mcp-package-docs/compare/v0.1.21...v0.1.23) (2025-03-15)
 
 
