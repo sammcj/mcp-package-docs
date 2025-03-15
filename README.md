@@ -12,6 +12,7 @@ An MCP (Model Context Protocol) server that provides LLMs with efficient access 
   - Go packages via `go doc`
   - Python libraries via built-in `help()`
   - NPM packages via registry documentation (including private registries)
+  - Rust crates via crates.io and docs.rs
 
 - **Smart Documentation Parsing**:
   - Structured output with description, usage, and examples
@@ -97,12 +98,12 @@ You can override these defaults if needed:
 
 3. The server provides the following tools:
 
-#### lookup_go_doc
+#### lookup_go_doc / describe_go_package
 
 Fetches Go package documentation
 ```typescript
 {
-  "name": "lookup_go_doc",
+  "name": "describe_go_package",
   "arguments": {
     "package": "encoding/json", // required
     "symbol": "Marshal"        // optional
@@ -110,15 +111,28 @@ Fetches Go package documentation
 }
 ```
 
-#### lookup_python_doc
+#### lookup_python_doc / describe_python_package
 
 Fetches Python package documentation
 ```typescript
 {
-  "name": "lookup_python_doc",
+  "name": "describe_python_package",
   "arguments": {
     "package": "requests",    // required
     "symbol": "get"          // optional
+  }
+}
+```
+
+#### describe_rust_package
+
+Fetches Rust crate documentation from crates.io and docs.rs
+```typescript
+{
+  "name": "describe_rust_package",
+  "arguments": {
+    "package": "serde",      // required: crate name
+    "version": "1.0.219"     // optional: specific version
   }
 }
 ```
@@ -132,19 +146,19 @@ Search within package documentation
   "arguments": {
     "package": "requests",    // required: package name
     "query": "authentication", // required: search query
-    "language": "python",     // required: "go", "python", or "npm"
+    "language": "python",     // required: "go", "python", "npm", "swift", or "rust"
     "fuzzy": true            // optional: enable fuzzy matching (default: true)
   }
 }
 ```
 
-#### lookup_npm_doc
+#### lookup_npm_doc / describe_npm_package
 
 Fetches NPM package documentation from both public and private registries. Automatically uses the appropriate registry based on your .npmrc configuration.
 
 ```typescript
 {
-  "name": "lookup_npm_doc",
+  "name": "describe_npm_package",
   "arguments": {
     "package": "axios",      // required - supports both scoped (@org/pkg) and unscoped packages
     "version": "1.6.0"       // optional
@@ -224,13 +238,32 @@ Get diagnostic information (errors, warnings) for a document
 #### Looking up Documentation
 
 ```typescript
-// Looking up documentation
-const docResult = await use_mcp_tool({
+// Looking up Go documentation
+const goDocResult = await use_mcp_tool({
   server_name: "package-docs",
-  tool_name: "lookup_python_doc",
+  tool_name: "describe_go_package",
+  arguments: {
+    package: "encoding/json",
+    symbol: "Marshal"
+  }
+});
+
+// Looking up Python documentation
+const pythonDocResult = await use_mcp_tool({
+  server_name: "package-docs",
+  tool_name: "describe_python_package",
   arguments: {
     package: "requests",
     symbol: "post"
+  }
+});
+
+// Looking up Rust documentation
+const rustDocResult = await use_mcp_tool({
+  server_name: "package-docs",
+  tool_name: "describe_rust_package",
+  arguments: {
+    package: "serde"
   }
 });
 
@@ -239,9 +272,9 @@ const searchResult = await use_mcp_tool({
   server_name: "package-docs",
   tool_name: "search_package_docs",
   arguments: {
-    package: "requests",
-    query: "authentication headers",
-    language: "python",
+    package: "serde",
+    query: "serialize",
+    language: "rust",
     fuzzy: true
   }
 });
@@ -265,7 +298,7 @@ const hoverResult = await use_mcp_tool({
 - Node.js >= 20
 - Go (for Go package documentation)
 - Python 3 (for Python package documentation)
-- Internet connection (for NPM package documentation)
+- Internet connection (for NPM package documentation and Rust crate documentation)
 - Language servers (for LSP functionality):
   - TypeScript/JavaScript: `npm install -g typescript-language-server typescript`
   - HTML/CSS/JSON: `npm install -g vscode-langservers-extracted`
