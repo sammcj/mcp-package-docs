@@ -6,6 +6,7 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from "@modelcontextprotocol/sdk/types.js"
+import { getToolDefinitions } from "./tool-handlers.js"
 import { exec } from "child_process"
 import { promisify } from "util"
 import axios from "axios"
@@ -18,6 +19,7 @@ import { SearchUtils, DocResult, SearchDocArgs, GoDocArgs, PythonDocArgs, SwiftD
 import Fuse from "fuse.js"
 import { RegistryUtils } from './registry-utils.js'
 import TypeScriptLspClient from "./lsp/typescript-lsp-client.js"
+import { RustDocsHandler } from "./rust-docs-integration.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -35,6 +37,7 @@ export class PackageDocsServer {
   private lspClient?: TypeScriptLspClient
   private lspEnabled: boolean
   private npmDocsHandler: NpmDocsHandler
+  private rustDocsHandler: RustDocsHandler
   private searchUtils: SearchUtils
   private registryUtils: RegistryUtils
 
@@ -48,6 +51,7 @@ export class PackageDocsServer {
   constructor() {
     this.logger = logger.child('PackageDocs')
     this.npmDocsHandler = new NpmDocsHandler()
+    this.rustDocsHandler = new RustDocsHandler(logger)
     this.searchUtils = new SearchUtils(logger)
     this.registryUtils = new RegistryUtils(logger)
 
@@ -85,344 +89,7 @@ export class PackageDocsServer {
 
   private setupToolHandlers(): void {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      // Define the main tools
-      const baseTools = [
-        {
-          name: "search_package_docs",
-          description: "Search for symbols or content within package documentation",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Package name to search within"
-              },
-              query: {
-                type: "string",
-                description: "Search query"
-              },
-              language: {
-                type: "string",
-                enum: ["go", "python", "npm", "swift"],
-                description: "Package language/ecosystem"
-              },
-              fuzzy: {
-                type: "boolean",
-                description: "Enable fuzzy matching",
-                default: true
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for local .npmrc files"
-              }
-            },
-            required: ["package", "query", "language"]
-          }
-        },
-        {
-          name: "describe_go_package",
-          description: "Get a brief description of a Go package",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Full package import path (e.g. encoding/json)",
-              },
-              symbol: {
-                type: "string",
-                description:
-                  "Optional symbol name to look up specific documentation",
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for local .npmrc files"
-              }
-            },
-            required: ["package"],
-          },
-        },
-        {
-          name: "describe_python_package",
-          description: "Get a brief description of a Python package",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Package name (e.g. requests)",
-              },
-              symbol: {
-                type: "string",
-                description:
-                  "Optional symbol name to look up specific documentation",
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for local .npmrc files"
-              }
-            },
-            required: ["package"],
-          },
-        },
-        {
-          name: "describe_npm_package",
-          description: "Get a brief description of an NPM package",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Package name (e.g. axios)",
-              },
-              version: {
-                type: "string",
-                description: "Optional package version",
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for local .npmrc files"
-              }
-            },
-            required: ["package"],
-          },
-        },
-        {
-          name: "describe_swift_package",
-          description: "Get a brief description of a Swift package",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Package URL (e.g. https://github.com/apple/swift-argument-parser)",
-              },
-              symbol: {
-                type: "string",
-                description: "Optional symbol name to look up specific documentation",
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for Package.swift file"
-              }
-            },
-            required: ["package"],
-          },
-        },
-        {
-          name: "get_npm_package_doc",
-          description: "Get full documentation for an NPM package",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Package name (e.g. axios)",
-              },
-              version: {
-                type: "string",
-                description: "Optional package version",
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for local .npmrc files"
-              },
-              section: {
-                type: "string",
-                description: "Optional section to retrieve (e.g. 'installation', 'api', 'examples')"
-              },
-              maxLength: {
-                type: "number",
-                description: "Optional maximum length of the returned documentation"
-              },
-              query: {
-                type: "string",
-                description: "Optional search query to filter documentation content"
-              }
-            },
-            required: ["package"],
-          },
-        },
-      ]
-
-      // Add legacy tools for backward compatibility
-      const legacyTools = [
-        {
-          name: "lookup_go_doc",
-          description: "[DEPRECATED] Use describe_go_package instead. Get a brief description of a Go package",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Full package import path (e.g. encoding/json)",
-              },
-              symbol: {
-                type: "string",
-                description:
-                  "Optional symbol name to look up specific documentation",
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for local .npmrc files"
-              }
-            },
-            required: ["package"],
-          },
-        },
-        {
-          name: "lookup_python_doc",
-          description: "[DEPRECATED] Use describe_python_package instead. Get a brief description of a Python package",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Package name (e.g. requests)",
-              },
-              symbol: {
-                type: "string",
-                description:
-                  "Optional symbol name to look up specific documentation",
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for local .npmrc files"
-              }
-            },
-            required: ["package"],
-          },
-        },
-        {
-          name: "lookup_npm_doc",
-          description: "[DEPRECATED] Use describe_npm_package instead. Get a brief description of an NPM package",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Package name (e.g. axios)",
-              },
-              version: {
-                type: "string",
-                description: "Optional package version",
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for local .npmrc files"
-              }
-            },
-            required: ["package"],
-          },
-        },
-      ]
-
-      // Combine main tools with legacy tools
-      const allTools = [...baseTools, ...legacyTools]
-
-      // Add LSP tools if enabled
-      if (this.lspEnabled && this.lspClient) {
-        const lspTools = [
-          {
-            name: "get_hover",
-            description: "Get hover information for a position in a document using Language Server Protocol",
-            inputSchema: {
-              type: "object",
-              properties: {
-                languageId: {
-                  type: "string",
-                  description: "The language identifier (e.g., 'typescript', 'javascript')"
-                },
-                filePath: {
-                  type: "string",
-                  description: "Absolute or relative path to the source file"
-                },
-                content: {
-                  type: "string",
-                  description: "The current content of the file"
-                },
-                line: {
-                  type: "number",
-                  description: "Zero-based line number for hover position"
-                },
-                character: {
-                  type: "number",
-                  description: "Zero-based character offset for hover position"
-                },
-                projectRoot: {
-                  type: "string",
-                  description: "Root directory of the project for resolving imports and node_modules"
-                },
-              },
-              required: ["languageId", "filePath", "content", "line", "character"],
-            },
-          },
-          {
-            name: "get_completions",
-            description: "Get completion suggestions for a position in a document using Language Server Protocol",
-            inputSchema: {
-              type: "object",
-              properties: {
-                languageId: {
-                  type: "string",
-                  description: "The language identifier (e.g., 'typescript', 'javascript')"
-                },
-                filePath: {
-                  type: "string",
-                  description: "Absolute or relative path to the source file"
-                },
-                content: {
-                  type: "string",
-                  description: "The current content of the file"
-                },
-                line: {
-                  type: "number",
-                  description: "Zero-based line number for completion position"
-                },
-                character: {
-                  type: "number",
-                  description: "Zero-based character offset for completion position"
-                },
-                projectRoot: {
-                  type: "string",
-                  description: "Root directory of the project for resolving imports and node_modules"
-                },
-              },
-              required: ["languageId", "filePath", "content", "line", "character"],
-            },
-          },
-          {
-            name: "get_diagnostics",
-            description: "Get diagnostic information for a document using Language Server Protocol",
-            inputSchema: {
-              type: "object",
-              properties: {
-                languageId: {
-                  type: "string",
-                  description: "The language identifier (e.g., 'typescript', 'javascript')"
-                },
-                filePath: {
-                  type: "string",
-                  description: "Absolute or relative path to the source file"
-                },
-                content: {
-                  type: "string",
-                  description: "The current content of the file"
-                },
-                projectRoot: {
-                  type: "string",
-                  description: "Root directory of the project for resolving imports and node_modules"
-                },
-              },
-              required: ["languageId", "filePath", "content"],
-            },
-          },
-        ]
-
-        return { tools: [...allTools, ...lspTools] }
-      }
-
-      return { tools: allTools }
+      return getToolDefinitions(this.lspEnabled, this.lspClient)
     })
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -473,6 +140,10 @@ export class PackageDocsServer {
               )
             }
             result = await this.searchPackageDocs(request.params.arguments)
+            break;
+
+          case "describe_rust_package":
+            result = await this.describeRustPackage(request.params.arguments as { package: string, version?: string })
             break
 
           case "describe_go_package":
@@ -604,6 +275,50 @@ export class PackageDocsServer {
     })
 
   }
+
+    /**
+   * Check if a Rust crate is installed locally
+   */
+    private async isRustCrateInstalledLocally(crateName: string, projectPath?: string): Promise<boolean> {
+        try {
+            // Check if the project has a Cargo.toml file
+            const cargoTomlPath = projectPath ? join(projectPath, "Cargo.toml") : "Cargo.toml";
+            if (existsSync(cargoTomlPath)) {
+                const cargoToml = readFileSync(cargoTomlPath, "utf-8");
+                // Simple check if the crate is mentioned in Cargo.toml
+                if (cargoToml.includes(crateName)) {
+                    return true;
+                }
+            }
+
+            // TODO: More sophisticated checks, e.g., looking in target/debug or target/release
+
+            return false; // Assume not installed if no Cargo.toml or not found
+        } catch {
+            // If any error occurs, assume the crate is not installed
+            return false;
+        }
+    }
+
+      /**
+     * Get documentation from a locally installed Rust crate
+     */
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    private async getLocalRustDoc(crateName: string): Promise<DocResult> {
+        try {
+            // TODO: Implement getting documentation from local target/doc directory
+            // This is a placeholder for now
+            return {
+                error: "Local Rust documentation retrieval not yet implemented",
+            };
+        } catch (error) {
+            const errorMessage =
+                error instanceof Error ? error.message : String(error);
+            return {
+                error: `Failed to fetch local Rust documentation: ${errorMessage}`,
+            };
+        }
+    }
 
   /**
    * Check if a Go package is installed locally
@@ -1711,6 +1426,76 @@ help(${packageName})
       this.logger.error(`Error getting Python documentation for ${packageName}:`, error)
       return {
         error: `Failed to fetch Python documentation: ${errorMessage}`
+      }
+    }
+  }
+
+  /**
+   * Get documentation for a Rust package
+   */
+  private async describeRustPackage(args: { package: string, version?: string }): Promise<DocResult> {
+    const { package: crateName, version } = args
+    this.logger.debug(`Getting Rust documentation for ${crateName}${version ? ` version ${version}` : ""}`)
+
+    try {
+      // Check if crate is installed locally first
+      const isInstalled = await this.isRustCrateInstalledLocally(crateName)
+
+      if (isInstalled) {
+        this.logger.debug(`Using local documentation for ${crateName}`)
+        return await this.getLocalRustDoc(crateName)
+      }
+
+      // If not installed, try to fetch from docs.rs
+      this.logger.debug(`Fetching Rust documentation for ${crateName} from docs.rs`)
+
+      try {
+        // Get crate details from crates.io
+        const crateDetails = await this.rustDocsHandler.getCrateDetails(crateName)
+
+        // Get documentation from docs.rs
+        const documentation = await this.rustDocsHandler.getCrateDocumentation(crateName, version)
+
+        // Extract a brief description from the documentation
+        const briefDescription = documentation.split('\n\n')[0] || crateDetails.description || `Rust crate: ${crateName}`
+
+        return {
+          description: briefDescription,
+          usage: `## ${crateName} ${crateDetails.versions[0]?.version || ''}
+
+${crateDetails.description || ''}
+
+### Installation
+
+Add this to your Cargo.toml:
+
+\`\`\`toml
+[dependencies]
+${crateName} = "${version || crateDetails.versions[0]?.version || '*'}"
+\`\`\`
+
+### Links
+
+${crateDetails.documentation ? `- [Documentation](${crateDetails.documentation})` : ''}
+${crateDetails.repository ? `- [Repository](${crateDetails.repository})` : ''}
+${crateDetails.homepage ? `- [Homepage](${crateDetails.homepage})` : ''}
+`,
+          example: documentation.includes('# Examples')
+            ? documentation.split('# Examples')[1]?.split('#')[0]?.trim()
+            : undefined
+        }
+      } catch {
+        // If fetching fails, suggest installation
+        return {
+          error: `Crate ${crateName} not found. Try adding it to your Cargo.toml.`,
+          suggestInstall: true
+        }
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      this.logger.error(`Error getting Rust documentation for ${crateName}:`, error)
+      return {
+        error: `Failed to fetch Rust documentation: ${errorMessage}`
       }
     }
   }
