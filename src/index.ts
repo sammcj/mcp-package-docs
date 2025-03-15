@@ -9,7 +9,7 @@ async function main() {
     const server = new PackageDocsServer();
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    logger.info("Package docs MCP server running on stdio");
+    logger.debug("Package docs MCP server running on stdio");
   } catch (error) {
     logger.error("Failed to start server:", error);
     process.exit(1);

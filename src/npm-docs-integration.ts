@@ -92,7 +92,7 @@ export class NpmDocsHandler {
     getLocalNpmDoc: (packageName: string, projectPath?: string) => DocResult
   ): Promise<DocResult> {
     const { package: packageName, version, projectPath, includeTypes = true, includeExamples = true } = args;
-    logger.info(`Getting NPM documentation for ${packageName}${version ? `@${version}` : ""}`);
+    logger.debug(`Getting NPM documentation for ${packageName}${version ? `@${version}` : ""}`);
 
     try {
       // Check if package is installed locally first
@@ -102,7 +102,7 @@ export class NpmDocsHandler {
       let examples: string[] = [];
 
       if (isInstalled) {
-        logger.info(`Using local documentation for ${packageName}`);
+        logger.debug(`Using local documentation for ${packageName}`);
         const localDoc = getLocalNpmDoc(packageName, projectPath);
 
         // Try to extract TypeScript definitions from local installation
@@ -136,7 +136,7 @@ export class NpmDocsHandler {
       }
 
       // If not installed, fetch from npm registry
-      logger.info(`Fetching NPM documentation for ${packageName} from registry`);
+      logger.debug(`Fetching NPM documentation for ${packageName} from registry`);
 
       try {
         const config = getRegistryConfigForPackage(packageName, projectPath);
@@ -254,7 +254,7 @@ export class NpmDocsHandler {
       includeExamples = true
     } = args;
 
-    logger.info(`Getting full NPM documentation for ${packageName}${version ? `@${version}` : ""}`);
+    logger.debug(`Getting full NPM documentation for ${packageName}${version ? `@${version}` : ""}`);
 
     try {
       // Check if package is installed locally first
@@ -264,7 +264,7 @@ export class NpmDocsHandler {
       let examples: string[] = [];
 
       if (isInstalled) {
-        logger.info(`Using local documentation for ${packageName}`);
+        logger.debug(`Using local documentation for ${packageName}`);
         const localDoc = getLocalNpmDoc(packageName, projectPath);
 
         // Try to extract TypeScript definitions from local installation
@@ -293,7 +293,7 @@ export class NpmDocsHandler {
       }
 
       // If not installed, fetch from npm registry
-      logger.info(`Fetching NPM documentation for ${packageName} from registry`);
+      logger.debug(`Fetching NPM documentation for ${packageName} from registry`);
 
       try {
         const config = getRegistryConfigForPackage(packageName, projectPath);

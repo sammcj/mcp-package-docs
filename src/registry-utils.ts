@@ -43,14 +43,14 @@ export class RegistryUtils {
     const scopeToRegistry = new Map<string, string>();
     const registryToToken = new Map<string, string>();
 
-    this.logger.info("Loading npm configuration...")
-    this.logger.info("Project directory:", projectPath || "not specified");
+    this.logger.debug("Loading npm configuration...")
+    this.logger.debug("Project directory:", projectPath || "not specified");
 
     // First read global .npmrc as base configuration
     const globalNpmrcPath = pathJoin(homedir(), ".npmrc");
-    this.logger.info("Checking global .npmrc at:", globalNpmrcPath);
+    this.logger.debug("Checking global .npmrc at:", globalNpmrcPath);
     if (existsSync(globalNpmrcPath)) {
-      this.logger.info("Found global .npmrc");
+      this.logger.debug("Found global .npmrc");
       try {
         const npmrcContent = readFileSync(globalNpmrcPath, "utf-8");
         this.parseNpmrcContent(npmrcContent, scopeToRegistry, registryToToken, registryMap);
@@ -75,9 +75,9 @@ export class RegistryUtils {
       // Process paths in reverse order (root to local)
       for (const dir of paths.reverse()) {
         const localNpmrcPath = pathJoin(dir, ".npmrc");
-        this.logger.info("Checking for .npmrc at:", localNpmrcPath);
+        this.logger.debug("Checking for .npmrc at:", localNpmrcPath);
         if (existsSync(localNpmrcPath)) {
-          this.logger.info("Found .npmrc at:", localNpmrcPath);
+          this.logger.debug("Found .npmrc at:", localNpmrcPath);
           try {
             const npmrcContent = readFileSync(localNpmrcPath, "utf-8");
             this.parseNpmrcContent(npmrcContent, scopeToRegistry, registryToToken, registryMap);
@@ -93,7 +93,7 @@ export class RegistryUtils {
       for (const [scope, registry] of scopeToRegistry.entries()) {
         const hostname = new URL(registry).host;
         const token = registryToToken.get(hostname);
-        this.logger.info(`Setting config for scope ${scope}:`, { registry, token: token ? "[REDACTED]" : undefined });
+        this.logger.debug(`Setting config for scope ${scope}:`, { registry, token: token ? "[REDACTED]" : undefined });
         registryMap.set(scope, { registry, token });
       }
 
@@ -103,12 +103,12 @@ export class RegistryUtils {
         const hostname = new URL(defaultConfig.registry).host;
         const token = registryToToken.get(hostname);
         if (token) {
-          this.logger.info("Setting token for default registry");
+          this.logger.debug("Setting token for default registry");
           registryMap.set("default", { ...defaultConfig, token });
         }
       }
 
-      this.logger.info("Final registry configurations:",
+      this.logger.debug("Final registry configurations:",
         Object.fromEntries(Array.from(registryMap.entries()).map(([k, v]) => [
           k,
           { registry: v.registry, token: v.token ? "[REDACTED]" : undefined }

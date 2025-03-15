@@ -81,16 +81,16 @@ export class PackageDocsServer {
     // Check if LSP functionality is enabled via environment variable
     this.lspEnabled = process.env.ENABLE_LSP === "true"
     if (this.lspEnabled) {
-      this.logger.info("Language Server Protocol support is enabled")
+      this.logger.debug("Language Server Protocol support is enabled")
       try {
         this.lspClient = new TypeScriptLspClient()
-        this.logger.info("TypeScript Language Server client initialized successfully")
+        this.logger.debug("TypeScript Language Server client initialized successfully")
       } catch (error) {
         this.logger.error("Failed to initialize TypeScript Language Server client:", error)
         this.lspEnabled = false
       }
     } else {
-      this.logger.info("Language Server Protocol support is disabled")
+      this.logger.debug("Language Server Protocol support is disabled")
     }
 
     this.setupToolHandlers()
@@ -463,7 +463,7 @@ export class PackageDocsServer {
       // Check cache first
       const cachedResult = this.cache.get(cacheKey)
       if (cachedResult) {
-        this.logger.info(`Cache hit for ${request.params.name}`)
+        this.logger.debug(`Cache hit for ${request.params.name}`)
         return {
           content: [
             {
@@ -973,7 +973,7 @@ help(${packageName})
   private async searchPackageDocs(args: SearchDocArgs): Promise<DocResult> {
     const { package: packageName, query, language, fuzzy = true, projectPath } = args
     const packageUrl = packageName
-    this.logger.info(`Searching ${language} package ${packageName} for "${query}"`)
+    this.logger.debug(`Searching ${language} package ${packageName} for "${query}"`)
 
     try {
       let docContent: string | Array<{ content: string; type: string }> = ""
@@ -1599,19 +1599,19 @@ help(${packageName})
    */
   private async describeGoPackage(args: GoDocArgs): Promise<DocResult> {
     const { package: packageName, symbol, projectPath } = args
-    this.logger.info(`Getting Go documentation for ${packageName}${symbol ? `.${symbol}` : ""}`)
+    this.logger.debug(`Getting Go documentation for ${packageName}${symbol ? `.${symbol}` : ""}`)
 
     try {
       // Check if package is installed locally first
       const isInstalled = await this.isGoPackageInstalledLocally(packageName, projectPath)
 
       if (isInstalled) {
-        this.logger.info(`Using local documentation for ${packageName}`)
+        this.logger.debug(`Using local documentation for ${packageName}`)
         return await this.getLocalGoDoc(packageName, symbol, projectPath)
       }
 
       // If not installed, try to fetch from pkg.go.dev
-      this.logger.info(`Fetching Go documentation for ${packageName} from pkg.go.dev`)
+      this.logger.debug(`Fetching Go documentation for ${packageName} from pkg.go.dev`)
 
       try {
         const cmd = symbol
@@ -1671,19 +1671,19 @@ help(${packageName})
    */
   private async describePythonPackage(args: PythonDocArgs): Promise<DocResult> {
     const { package: packageName, symbol, projectPath } = args
-    this.logger.info(`Getting Python documentation for ${packageName}${symbol ? `.${symbol}` : ""}`)
+    this.logger.debug(`Getting Python documentation for ${packageName}${symbol ? `.${symbol}` : ""}`)
 
     try {
       // Check if package is installed locally first
       const isInstalled = await this.isPythonPackageInstalledLocally(packageName, projectPath)
 
       if (isInstalled) {
-        this.logger.info(`Using local documentation for ${packageName}`)
+        this.logger.debug(`Using local documentation for ${packageName}`)
         return await this.getLocalPythonDoc(packageName, symbol, projectPath)
       }
 
       // If not installed, try to fetch from PyPI
-      this.logger.info(`Fetching Python documentation for ${packageName} from PyPI`)
+      this.logger.debug(`Fetching Python documentation for ${packageName} from PyPI`)
 
       try {
         const url = `https://pypi.org/pypi/${packageName}/json`
@@ -1731,19 +1731,19 @@ help(${packageName})
    */
   private async describeSwiftPackage(args: SwiftDocArgs): Promise<DocResult> {
     const { package: packageUrl, symbol, projectPath } = args
-    this.logger.info(`Getting Swift documentation for ${packageUrl}${symbol ? `.${symbol}` : ""}`)
+    this.logger.debug(`Getting Swift documentation for ${packageUrl}${symbol ? `.${symbol}` : ""}`)
 
     try {
       // Check if package is installed locally first
       const isInstalled = await this.isSwiftPackageInstalledLocally(packageUrl, projectPath)
 
       if (isInstalled) {
-        this.logger.info(`Using local documentation for ${packageUrl}`)
+        this.logger.debug(`Using local documentation for ${packageUrl}`)
         return await this.getLocalSwiftDoc(packageUrl, symbol, projectPath)
       }
 
       // If not installed, try to fetch from GitHub or other sources
-      this.logger.info(`Fetching Swift documentation for ${packageUrl} from remote sources`)
+      this.logger.debug(`Fetching Swift documentation for ${packageUrl} from remote sources`)
 
       try {
         // Extract package name from URL

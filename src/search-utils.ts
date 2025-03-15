@@ -513,7 +513,7 @@ export class SearchUtils {
    * Extract only the most relevant content from a README for coding purposes
    */
   public extractRelevantContent(readme: string): string {
-    this.logger.info("Extracting relevant content from README")
+    this.logger.debug("Extracting relevant content from README")
 
     // First, remove all badge links and reference-style links
     let cleanedReadme = readme
@@ -522,7 +522,7 @@ export class SearchUtils {
 
     // Split the readme into sections
     const sections = cleanedReadme.split(/(?=^#+ )/m)
-    this.logger.info(`Found ${sections.length} sections in README`)
+    this.logger.debug(`Found ${sections.length} sections in README`)
 
     // Always include the first code example if it exists
     const firstCodeExample = readme.match(/```[\s\S]*?```/)
@@ -537,7 +537,7 @@ export class SearchUtils {
       const introContent = introParagraphs.slice(0, Math.min(3, introParagraphs.length)).join('\n\n')
       if (introContent.trim()) {
         relevantSections.push(introContent.trim())
-        this.logger.info("Added intro section")
+        this.logger.debug("Added intro section")
       }
 
       // If there's a code example in the intro, include it
@@ -578,7 +578,7 @@ export class SearchUtils {
         }
       }
       if (shouldSkip) {
-        this.logger.info(`Skipping section: ${heading}`)
+        this.logger.debug(`Skipping section: ${heading}`)
         continue
       }
 
@@ -587,7 +587,7 @@ export class SearchUtils {
       for (const keyword of usefulKeywords) {
         if (heading.includes(keyword)) {
           shouldInclude = true
-          this.logger.info(`Including section due to keyword match: ${heading} (matched: ${keyword})`)
+          this.logger.debug(`Including section due to keyword match: ${heading} (matched: ${keyword})`)
           break
         }
       }
@@ -595,13 +595,13 @@ export class SearchUtils {
       // Also include sections with code examples even if they don't match keywords
       if (!shouldInclude && section.includes('```')) {
         shouldInclude = true
-        this.logger.info(`Including section due to code example: ${heading}`)
+        this.logger.debug(`Including section due to code example: ${heading}`)
       }
 
       // If this is a short section with a simple heading (likely important), include it
       if (!shouldInclude && section.length < 500 && heading.split(' ').length <= 3) {
         shouldInclude = true
-        this.logger.info(`Including short section with simple heading: ${heading}`)
+        this.logger.debug(`Including short section with simple heading: ${heading}`)
       }
 
       if (shouldInclude) {
@@ -611,7 +611,7 @@ export class SearchUtils {
 
     // If we didn't find any relevant sections with headings, be less strict
     if (relevantSections.length <= 1) {
-      this.logger.info("Few relevant sections found, being less strict")
+      this.logger.debug("Few relevant sections found, being less strict")
 
       // Include any section with a code example
       for (let i = 0; i < sections.length; i++) {
@@ -620,7 +620,7 @@ export class SearchUtils {
 
         if (section.includes('```') && !relevantSections.includes(section)) {
           relevantSections.push(section)
-          this.logger.info(`Added section with code example`)
+          this.logger.debug(`Added section with code example`)
         }
       }
 
@@ -629,7 +629,7 @@ export class SearchUtils {
         for (let i = 0; i < Math.min(3, sections.length); i++) {
           if (sections[i].startsWith('#') && !relevantSections.includes(sections[i])) {
             relevantSections.push(sections[i])
-            this.logger.info(`Added section ${i} as fallback`)
+            this.logger.debug(`Added section ${i} as fallback`)
           }
         }
       }
@@ -638,12 +638,12 @@ export class SearchUtils {
     // If we still don't have any code examples, add the first one we found
     if (!hasIncludedCodeExample && firstCodeExample) {
       relevantSections.push(`## Code Example\n\n${firstCodeExample[0]}`)
-      this.logger.info("Added first code example")
+      this.logger.debug("Added first code example")
     }
 
     // If we still have nothing, just return a portion of the original README
     if (relevantSections.length === 0) {
-      this.logger.info("No relevant sections found, returning truncated README")
+      this.logger.debug("No relevant sections found, returning truncated README")
       // Return the first 2000 characters of the README
       return readme.substring(0, 2000) + "... (truncated)"
     }
@@ -656,7 +656,7 @@ export class SearchUtils {
       .replace(/\[!\[[^\]]*\]\([^\)]*\)\]\([^\)]*\)/g, '')
       .replace(/\[[^\]]*\]:\s*https?:\/\/[^\s]+/g, '')
 
-    this.logger.info(`Extracted ${content.length} characters of relevant content`)
+    this.logger.debug(`Extracted ${content.length} characters of relevant content`)
 
     return content
   }

@@ -107,7 +107,7 @@ export class NpmDocsEnhancer {
     typesContent: string,
     isLocal: boolean = false
   ): Promise<PackageApiDocumentation> {
-    this.logger.info(`Extracting API documentation for ${packageName}`);
+    this.logger.debug(`Extracting API documentation for ${packageName}`);
 
     const result: PackageApiDocumentation = {
       packageName,
@@ -490,7 +490,7 @@ export class NpmDocsEnhancer {
    */
   public async fetchTypeDefinition(packageName: string, version?: string): Promise<string | undefined> {
     try {
-      this.logger.info(`Fetching TypeScript definition for ${packageName}${version ? `@${version}` : ""}`);
+      this.logger.debug(`Fetching TypeScript definition for ${packageName}${version ? `@${version}` : ""}`);
 
       // First, try to get package.json to find the types field
       const packageJsonUrl = `https://unpkg.com/${packageName}${version ? `@${version}` : ""}/package.json`;
@@ -556,7 +556,7 @@ export class NpmDocsEnhancer {
    */
   public async fetchExamples(packageName: string, version?: string): Promise<string[]> {
     try {
-      this.logger.info(`Fetching examples for ${packageName}${version ? `@${version}` : ""}`);
+      this.logger.debug(`Fetching examples for ${packageName}${version ? `@${version}` : ""}`);
 
       const examples: string[] = [];
 
