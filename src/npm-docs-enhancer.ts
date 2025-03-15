@@ -1,6 +1,4 @@
-import axios from 'axios';
-import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import axios from 'axios'
 import * as ts from 'typescript';
 import { NodeHtmlMarkdown } from 'node-html-markdown';
 import { McpLogger } from './logger.js';
@@ -105,7 +103,6 @@ export class NpmDocsEnhancer {
   public async extractApiDocumentation(
     packageName: string,
     typesContent: string,
-    isLocal: boolean = false
   ): Promise<PackageApiDocumentation> {
     this.logger.debug(`Extracting API documentation for ${packageName}`);
 
@@ -328,7 +325,6 @@ export class NpmDocsEnhancer {
       } else if (ts.isMethodSignature(member)) {
         if (member.name) {
           const methodName = member.name.getText();
-          const methodSignature = member.getText().trim();
           const methodParams = member.parameters.map(param => this.extractParameter(param));
           const methodReturnType = member.type ? member.type.getText() : 'any';
           const methodDescription = this.extractJSDocComment(member);
@@ -527,7 +523,7 @@ export class NpmDocsEnhancer {
           if (response.data) {
             return response.data;
           }
-        } catch (error) {
+        } catch {
           // Continue to next path
         }
       }
@@ -540,7 +536,7 @@ export class NpmDocsEnhancer {
         if (typesPackageResponse.data) {
           return typesPackageResponse.data;
         }
-      } catch (error) {
+      } catch {
         // No @types package found
       }
 
@@ -592,7 +588,7 @@ export class NpmDocsEnhancer {
                       if (fileResponse.data) {
                         examples.push(`// Example: ${fileName}\n${fileResponse.data}`);
                       }
-                    } catch (error) {
+                    } catch {
                       // Skip this file
                     }
                   }
@@ -600,7 +596,7 @@ export class NpmDocsEnhancer {
               }
             }
           }
-        } catch (error) {
+        } catch {
           // Continue to next path
         }
       }
@@ -623,7 +619,7 @@ export class NpmDocsEnhancer {
               }
             }
           }
-        } catch (error) {
+        } catch {
           // No README found
         }
       }

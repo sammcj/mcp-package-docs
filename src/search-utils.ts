@@ -1,4 +1,3 @@
-import Fuse from "fuse.js"
 import { McpLogger } from './logger.js'
 
 export interface DocResult {
@@ -28,7 +27,7 @@ export interface SearchResult {
 export interface SearchDocArgs {
   package: string
   query: string
-  language: "go" | "python" | "npm" | "swift"
+  language: "go" | "python" | "npm" | "swift" | "rust"
   fuzzy?: boolean
   projectPath?: string
 }
@@ -39,7 +38,7 @@ export const isSearchDocArgs = (args: unknown): args is SearchDocArgs => {
     args !== null &&
     typeof (args as SearchDocArgs).package === "string" &&
     typeof (args as SearchDocArgs).query === "string" &&
-    ["go", "python", "npm", "swift"].includes((args as SearchDocArgs).language) &&
+    ["go", "python", "npm", "swift", "rust"].includes((args as SearchDocArgs).language) &&
     (typeof (args as SearchDocArgs).fuzzy === "boolean" ||
       (args as SearchDocArgs).fuzzy === undefined) &&
     (typeof (args as SearchDocArgs).projectPath === "string" ||
@@ -161,19 +160,27 @@ export class SearchUtils {
   public extractSymbol(text: string, language: string): string | undefined {
     const firstLine = text.split('\n')[0]
     switch (language) {
-      case "go":
+      case "go": {
         const goMatch = firstLine.match(/^(func|type|var|const)\s+(\w+)/)
         return goMatch?.[2]
-      case "python":
+      }
+      case "python": {
         const pyMatch = firstLine.match(/^(class|def)\s+(\w+)/)
         return pyMatch?.[2]
-      case "npm":
+      }
+      case "npm": {
         // Extract symbol from markdown headings or code blocks
         const npmMatch = firstLine.match(/^#+\s*(?:`([^`]+)`|(\w+))/)
         return npmMatch?.[1] || npmMatch?.[2]
-      case "swift":
+      }
+      case "swift": {
         const swiftMatch = firstLine.match(/^(class|struct|enum|protocol|func|var|let)\s+(\w+)/)
         return swiftMatch?.[2]
+      }
+      case "rust": {
+        const rustMatch = firstLine.match(/^(pub\s+)?(struct|enum|trait|impl|fn|mod|type)\s+(\w+)/)
+        return rustMatch?.[3]
+      }
       default:
         return undefined
     }
@@ -308,7 +315,7 @@ export class SearchUtils {
   /**
    * Parse NPM documentation into sections
    */
-  public parseNpmDoc(data: any): Array<{ content: string; type: string }> {
+  public parseNpmDoc(data: { description?: string; readme?: string }): Array<{ content: string; type: string }> {
     const sections: Array<{ content: string; type: string }> = []
 
     // Add package description
@@ -516,8 +523,8 @@ export class SearchUtils {
     this.logger.debug("Extracting relevant content from README")
 
     // First, remove all badge links and reference-style links
-    let cleanedReadme = readme
-      .replace(/\[!\[[^\]]*\]\([^\)]*\)\]\([^\)]*\)/g, '') // Remove badge links
+    const cleanedReadme = readme
+      .replace(/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g, '') // Remove badge links
       .replace(/\[[^\]]*\]:\s*https?:\/\/[^\s]+/g, '')    // Remove reference links
 
     // Split the readme into sections
@@ -653,7 +660,7 @@ export class SearchUtils {
 
     // Remove any remaining badge links or reference links that might be in the content
     content = content
-      .replace(/\[!\[[^\]]*\]\([^\)]*\)\]\([^\)]*\)/g, '')
+      .replace(/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g, '')
       .replace(/\[[^\]]*\]:\s*https?:\/\/[^\s]+/g, '')
 
     this.logger.debug(`Extracted ${content.length} characters of relevant content`)

@@ -6,20 +6,20 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from "@modelcontextprotocol/sdk/types.js"
+import { getToolDefinitions } from "./tool-handlers.js"
 import { exec } from "child_process"
 import { promisify } from "util"
-import axios, { AxiosError } from "axios"
+import axios from "axios"
 import { fileURLToPath } from "url"
 import { dirname, join } from "path"
 import { readFileSync, existsSync } from "fs"
-import { NodeHtmlMarkdown } from 'node-html-markdown'
-
 import { logger, McpLogger } from './logger.js'
 import { NpmDocsHandler, NpmDocArgs, isNpmDocArgs } from './npm-docs-integration.js'
-import { SearchUtils, DocResult, SearchDocArgs, GoDocArgs, PythonDocArgs, SwiftDocArgs, isSearchDocArgs, isGoDocArgs, isPythonDocArgs, isSwiftDocArgs, SearchResults } from './search-utils.js'
+import { SearchUtils, DocResult, SearchDocArgs, GoDocArgs, PythonDocArgs, SwiftDocArgs, isSearchDocArgs, isGoDocArgs, isPythonDocArgs, isSwiftDocArgs } from './search-utils.js'
 import Fuse from "fuse.js"
 import { RegistryUtils } from './registry-utils.js'
 import TypeScriptLspClient from "./lsp/typescript-lsp-client.js"
+import { RustDocsHandler } from "./rust-docs-integration.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -29,17 +29,6 @@ const packageJson = JSON.parse(
 
 const execAsync = promisify(exec)
 
-// Initialize HTML to Markdown converter with custom options
-const nhm = new NodeHtmlMarkdown({
-  // Configuration options for better Markdown output
-  useInlineLinks: true,
-  maxConsecutiveNewlines: 2,
-  bulletMarker: '-',
-  codeBlockStyle: 'fenced',
-  emDelimiter: '*',
-  strongDelimiter: '**',
-  keepDataImages: false
-})
 
 export class PackageDocsServer {
   private server: Server
@@ -48,6 +37,7 @@ export class PackageDocsServer {
   private lspClient?: TypeScriptLspClient
   private lspEnabled: boolean
   private npmDocsHandler: NpmDocsHandler
+  private rustDocsHandler: RustDocsHandler
   private searchUtils: SearchUtils
   private registryUtils: RegistryUtils
 
@@ -61,6 +51,7 @@ export class PackageDocsServer {
   constructor() {
     this.logger = logger.child('PackageDocs')
     this.npmDocsHandler = new NpmDocsHandler()
+    this.rustDocsHandler = new RustDocsHandler(logger)
     this.searchUtils = new SearchUtils(logger)
     this.registryUtils = new RegistryUtils(logger)
 
@@ -85,8 +76,8 @@ export class PackageDocsServer {
       try {
         this.lspClient = new TypeScriptLspClient()
         this.logger.debug("TypeScript Language Server client initialized successfully")
-      } catch (error) {
-        this.logger.error("Failed to initialize TypeScript Language Server client:", error)
+      } catch {
+        this.logger.error("Failed to initialize TypeScript Language Server client")
         this.lspEnabled = false
       }
     } else {
@@ -98,344 +89,7 @@ export class PackageDocsServer {
 
   private setupToolHandlers(): void {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      // Define the main tools
-      const baseTools = [
-        {
-          name: "search_package_docs",
-          description: "Search for symbols or content within package documentation",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Package name to search within"
-              },
-              query: {
-                type: "string",
-                description: "Search query"
-              },
-              language: {
-                type: "string",
-                enum: ["go", "python", "npm", "swift"],
-                description: "Package language/ecosystem"
-              },
-              fuzzy: {
-                type: "boolean",
-                description: "Enable fuzzy matching",
-                default: true
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for local .npmrc files"
-              }
-            },
-            required: ["package", "query", "language"]
-          }
-        },
-        {
-          name: "describe_go_package",
-          description: "Get a brief description of a Go package",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Full package import path (e.g. encoding/json)",
-              },
-              symbol: {
-                type: "string",
-                description:
-                  "Optional symbol name to look up specific documentation",
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for local .npmrc files"
-              }
-            },
-            required: ["package"],
-          },
-        },
-        {
-          name: "describe_python_package",
-          description: "Get a brief description of a Python package",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Package name (e.g. requests)",
-              },
-              symbol: {
-                type: "string",
-                description:
-                  "Optional symbol name to look up specific documentation",
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for local .npmrc files"
-              }
-            },
-            required: ["package"],
-          },
-        },
-        {
-          name: "describe_npm_package",
-          description: "Get a brief description of an NPM package",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Package name (e.g. axios)",
-              },
-              version: {
-                type: "string",
-                description: "Optional package version",
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for local .npmrc files"
-              }
-            },
-            required: ["package"],
-          },
-        },
-        {
-          name: "describe_swift_package",
-          description: "Get a brief description of a Swift package",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Package URL (e.g. https://github.com/apple/swift-argument-parser)",
-              },
-              symbol: {
-                type: "string",
-                description: "Optional symbol name to look up specific documentation",
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for Package.swift file"
-              }
-            },
-            required: ["package"],
-          },
-        },
-        {
-          name: "get_npm_package_doc",
-          description: "Get full documentation for an NPM package",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Package name (e.g. axios)",
-              },
-              version: {
-                type: "string",
-                description: "Optional package version",
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for local .npmrc files"
-              },
-              section: {
-                type: "string",
-                description: "Optional section to retrieve (e.g. 'installation', 'api', 'examples')"
-              },
-              maxLength: {
-                type: "number",
-                description: "Optional maximum length of the returned documentation"
-              },
-              query: {
-                type: "string",
-                description: "Optional search query to filter documentation content"
-              }
-            },
-            required: ["package"],
-          },
-        },
-      ]
-
-      // Add legacy tools for backward compatibility
-      const legacyTools = [
-        {
-          name: "lookup_go_doc",
-          description: "[DEPRECATED] Use describe_go_package instead. Get a brief description of a Go package",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Full package import path (e.g. encoding/json)",
-              },
-              symbol: {
-                type: "string",
-                description:
-                  "Optional symbol name to look up specific documentation",
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for local .npmrc files"
-              }
-            },
-            required: ["package"],
-          },
-        },
-        {
-          name: "lookup_python_doc",
-          description: "[DEPRECATED] Use describe_python_package instead. Get a brief description of a Python package",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Package name (e.g. requests)",
-              },
-              symbol: {
-                type: "string",
-                description:
-                  "Optional symbol name to look up specific documentation",
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for local .npmrc files"
-              }
-            },
-            required: ["package"],
-          },
-        },
-        {
-          name: "lookup_npm_doc",
-          description: "[DEPRECATED] Use describe_npm_package instead. Get a brief description of an NPM package",
-          inputSchema: {
-            type: "object",
-            properties: {
-              package: {
-                type: "string",
-                description: "Package name (e.g. axios)",
-              },
-              version: {
-                type: "string",
-                description: "Optional package version",
-              },
-              projectPath: {
-                type: "string",
-                description: "Optional path to project directory for local .npmrc files"
-              }
-            },
-            required: ["package"],
-          },
-        },
-      ]
-
-      // Combine main tools with legacy tools
-      const allTools = [...baseTools, ...legacyTools]
-
-      // Add LSP tools if enabled
-      if (this.lspEnabled && this.lspClient) {
-        const lspTools = [
-          {
-            name: "get_hover",
-            description: "Get hover information for a position in a document using Language Server Protocol",
-            inputSchema: {
-              type: "object",
-              properties: {
-                languageId: {
-                  type: "string",
-                  description: "The language identifier (e.g., 'typescript', 'javascript')"
-                },
-                filePath: {
-                  type: "string",
-                  description: "Absolute or relative path to the source file"
-                },
-                content: {
-                  type: "string",
-                  description: "The current content of the file"
-                },
-                line: {
-                  type: "number",
-                  description: "Zero-based line number for hover position"
-                },
-                character: {
-                  type: "number",
-                  description: "Zero-based character offset for hover position"
-                },
-                projectRoot: {
-                  type: "string",
-                  description: "Root directory of the project for resolving imports and node_modules"
-                },
-              },
-              required: ["languageId", "filePath", "content", "line", "character"],
-            },
-          },
-          {
-            name: "get_completions",
-            description: "Get completion suggestions for a position in a document using Language Server Protocol",
-            inputSchema: {
-              type: "object",
-              properties: {
-                languageId: {
-                  type: "string",
-                  description: "The language identifier (e.g., 'typescript', 'javascript')"
-                },
-                filePath: {
-                  type: "string",
-                  description: "Absolute or relative path to the source file"
-                },
-                content: {
-                  type: "string",
-                  description: "The current content of the file"
-                },
-                line: {
-                  type: "number",
-                  description: "Zero-based line number for completion position"
-                },
-                character: {
-                  type: "number",
-                  description: "Zero-based character offset for completion position"
-                },
-                projectRoot: {
-                  type: "string",
-                  description: "Root directory of the project for resolving imports and node_modules"
-                },
-              },
-              required: ["languageId", "filePath", "content", "line", "character"],
-            },
-          },
-          {
-            name: "get_diagnostics",
-            description: "Get diagnostic information for a document using Language Server Protocol",
-            inputSchema: {
-              type: "object",
-              properties: {
-                languageId: {
-                  type: "string",
-                  description: "The language identifier (e.g., 'typescript', 'javascript')"
-                },
-                filePath: {
-                  type: "string",
-                  description: "Absolute or relative path to the source file"
-                },
-                content: {
-                  type: "string",
-                  description: "The current content of the file"
-                },
-                projectRoot: {
-                  type: "string",
-                  description: "Root directory of the project for resolving imports and node_modules"
-                },
-              },
-              required: ["languageId", "filePath", "content"],
-            },
-          },
-        ]
-
-        return { tools: [...allTools, ...lspTools] }
-      }
-
-      return { tools: allTools }
+      return getToolDefinitions(this.lspEnabled, this.lspClient)
     })
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -446,11 +100,11 @@ export class PackageDocsServer {
       // Handle LSP tools if enabled
       if (this.lspEnabled && this.lspClient) {
         if (request.params.name === "get_hover") {
-          return await this.handleGetHover(request.params.arguments)
+          return await this.handleGetHover(request.params.arguments as { languageId: string; filePath: string; content: string; line: number; character: number; projectRoot: string })
         } else if (request.params.name === "get_completions") {
-          return await this.handleGetCompletions(request.params.arguments)
+          return await this.handleGetCompletions(request.params.arguments as { languageId: string; filePath: string; content: string; line: number; character: number; projectRoot: string })
         } else if (request.params.name === "get_diagnostics") {
-          return await this.handleGetDiagnostics(request.params.arguments)
+          return await this.handleGetDiagnostics(request.params.arguments as { languageId: string; filePath: string; content: string; projectRoot: string })
         }
       }
 
@@ -486,6 +140,10 @@ export class PackageDocsServer {
               )
             }
             result = await this.searchPackageDocs(request.params.arguments)
+            break;
+
+          case "describe_rust_package":
+            result = await this.describeRustPackage(request.params.arguments as { package: string, version?: string })
             break
 
           case "describe_go_package":
@@ -618,6 +276,50 @@ export class PackageDocsServer {
 
   }
 
+    /**
+   * Check if a Rust crate is installed locally
+   */
+    private async isRustCrateInstalledLocally(crateName: string, projectPath?: string): Promise<boolean> {
+        try {
+            // Check if the project has a Cargo.toml file
+            const cargoTomlPath = projectPath ? join(projectPath, "Cargo.toml") : "Cargo.toml";
+            if (existsSync(cargoTomlPath)) {
+                const cargoToml = readFileSync(cargoTomlPath, "utf-8");
+                // Simple check if the crate is mentioned in Cargo.toml
+                if (cargoToml.includes(crateName)) {
+                    return true;
+                }
+            }
+
+            // TODO: More sophisticated checks, e.g., looking in target/debug or target/release
+
+            return false; // Assume not installed if no Cargo.toml or not found
+        } catch {
+            // If any error occurs, assume the crate is not installed
+            return false;
+        }
+    }
+
+      /**
+     * Get documentation from a locally installed Rust crate
+     */
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    private async getLocalRustDoc(crateName: string): Promise<DocResult> {
+        try {
+            // TODO: Implement getting documentation from local target/doc directory
+            // This is a placeholder for now
+            return {
+                error: "Local Rust documentation retrieval not yet implemented",
+            };
+        } catch (error) {
+            const errorMessage =
+                error instanceof Error ? error.message : String(error);
+            return {
+                error: `Failed to fetch local Rust documentation: ${errorMessage}`,
+            };
+        }
+    }
+
   /**
    * Check if a Go package is installed locally
    */
@@ -636,7 +338,7 @@ export class PackageDocsServer {
       // Try to find the package in GOPATH
       const { stdout } = await execAsync(`go list -f '{{.Dir}}' ${packageName}`)
       return !!stdout.trim()
-    } catch (error) {
+    } catch {
       // If the command fails, the package is likely not installed
       return false
     }
@@ -645,7 +347,7 @@ export class PackageDocsServer {
   /**
    * Check if a Python package is installed locally
    */
-  private async isPythonPackageInstalledLocally(packageName: string, projectPath?: string): Promise<boolean> {
+  private async isPythonPackageInstalledLocally(packageName: string): Promise<boolean> {
     try {
       // Check if we can import the package
       const pythonCode = `
@@ -656,7 +358,7 @@ print(spec is not None)
 `
       const { stdout } = await execAsync(`python3 -c "${pythonCode}"`)
       return stdout.trim() === "True"
-    } catch (error) {
+    } catch {
       return false
     }
   }
@@ -671,7 +373,7 @@ print(spec is not None)
       const packageJsonPath = join(basePath, "node_modules", packageName, "package.json")
 
       return existsSync(packageJsonPath)
-    } catch (error) {
+    } catch {
       return false
     }
   }
@@ -696,7 +398,7 @@ print(spec is not None)
       }
 
       return false
-    } catch (error) {
+    } catch {
       return false
     }
   }
@@ -704,7 +406,7 @@ print(spec is not None)
   /**
    * Get documentation from a locally installed Go package
    */
-  private async getLocalGoDoc(packageName: string, symbol?: string, projectPath?: string): Promise<DocResult> {
+  private async getLocalGoDoc(packageName: string, symbol?: string): Promise<DocResult> {
     try {
       const cmd = symbol
         ? `go doc ${packageName}.${symbol}`
@@ -753,7 +455,7 @@ print(spec is not None)
   /**
    * Get documentation from a locally installed Python package
    */
-  private async getLocalPythonDoc(packageName: string, symbol?: string, projectPath?: string): Promise<DocResult> {
+  private async getLocalPythonDoc(packageName: string, symbol?: string): Promise<DocResult> {
     try {
       const pythonCode = symbol
         ? `
@@ -883,7 +585,7 @@ help(${packageName})
         return {
           description: stdout.trim()
         }
-      } catch (docError) {
+      } catch {
         // If swift-doc fails, try to extract info from Package.swift
         const packageSwiftPath = projectPath ? join(projectPath, "Package.swift") : "Package.swift"
         if (existsSync(packageSwiftPath)) {
@@ -958,7 +660,7 @@ help(${packageName})
 
       // Remove .git extension if present
       return lastPart.replace(/\.git$/, '')
-    } catch (error) {
+    } catch {
       // If the URL is invalid, try to extract the name from the string
       const parts = url.split('/')
       const lastPart = parts[parts.length - 1]
@@ -978,14 +680,73 @@ help(${packageName})
     try {
       let docContent: string | Array<{ content: string; type: string }> = ""
       let isInstalled = false
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let packageInfo: any = null
 
       // Check if package is installed locally first
       switch (language) {
+        case "rust":
+          isInstalled = await this.isRustCrateInstalledLocally(packageName)
+          if (isInstalled) {
+            const localDoc = await this.getLocalRustDoc(packageName)
+            if (!localDoc.error) {
+              docContent = [
+                { content: localDoc.description || "", type: "description" },
+                { content: localDoc.usage || "", type: "usage" },
+                { content: localDoc.example || "", type: "example" }
+              ].filter(item => item.content)
+            }
+          } else {
+            // If not installed, try to fetch from docs.rs and crates.io
+            try {
+              // Get crate details from crates.io
+              const crateDetails = await this.rustDocsHandler.getCrateDetails(packageName)
+
+              // Get documentation from docs.rs
+              const documentation = await this.rustDocsHandler.getCrateDocumentation(packageName)
+
+              // Parse the documentation into sections
+              const sections = documentation.split(/#+\s+/m)
+
+              docContent = []
+
+              // Add description
+              if (crateDetails.description) {
+                docContent.push({
+                  content: crateDetails.description,
+                  type: "description"
+                })
+              }
+
+              // Process each section
+              for (const section of sections) {
+                if (!section.trim()) continue
+
+                const lines = section.split('\n')
+                const heading = lines[0].toLowerCase()
+                const content = lines.join('\n')
+
+                let type = "general"
+                if (heading.includes("example")) type = "example"
+                else if (heading.includes("usage") || heading.includes("getting started")) type = "usage"
+                else if (heading.includes("struct") || heading.includes("enum") || heading.includes("trait")) type = "type"
+                else if (heading.includes("function") || heading.includes("method")) type = "function"
+
+                docContent.push({ content, type })
+              }
+
+              // Add package metadata
+              packageInfo = crateDetails
+            } catch (error) {
+              this.logger.error(`Error fetching Rust documentation: ${error}`)
+            }
+          }
+          break
+
         case "go":
           isInstalled = await this.isGoPackageInstalledLocally(packageName, projectPath)
           if (isInstalled) {
-            const localDoc = await this.getLocalGoDoc(packageName, undefined, projectPath)
+            const localDoc = await this.getLocalGoDoc(packageName, undefined)
             if (!localDoc.error) {
               docContent = this.searchUtils.parseGoDoc(
                 [localDoc.description, localDoc.usage, localDoc.example]
@@ -998,7 +759,7 @@ help(${packageName})
             try {
               const { stdout } = await execAsync(`go doc ${packageName}`)
               docContent = this.searchUtils.parseGoDoc(stdout)
-            } catch (error) {
+            } catch {
               // Try to get package info from go.dev API if available
               try {
                 const url = `https://pkg.go.dev/api/packages/${encodeURIComponent(packageName)}`
@@ -1020,9 +781,9 @@ help(${packageName})
           break
 
         case "python":
-          isInstalled = await this.isPythonPackageInstalledLocally(packageName, projectPath)
+          isInstalled = await this.isPythonPackageInstalledLocally(packageName)
           if (isInstalled) {
-            const localDoc = await this.getLocalPythonDoc(packageName, undefined, projectPath)
+            const localDoc = await this.getLocalPythonDoc(packageName, undefined)
             if (!localDoc.error) {
               docContent = this.searchUtils.parsePythonDoc(
                 [localDoc.description, localDoc.usage, localDoc.example]
@@ -1244,6 +1005,7 @@ help(${packageName})
       }
 
       // Perform search on the documentation content
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const searchResults: any[] = []
 
       if (Array.isArray(docContent)) {
@@ -1475,7 +1237,7 @@ help(${packageName})
   /**
    * Handle LSP hover requests
    */
-  private async handleGetHover(args: any) {
+  private async handleGetHover(args: { languageId: string; filePath: string; content: string; line: number; character: number; projectRoot: string }) {
     if (!this.lspClient) {
       throw new McpError(ErrorCode.InternalError, "LSP client not initialized")
     }
@@ -1516,7 +1278,7 @@ help(${packageName})
   /**
    * Handle LSP completions requests
    */
-  private async handleGetCompletions(args: any) {
+  private async handleGetCompletions(args: { languageId: string; filePath: string; content: string; line: number; character: number; projectRoot: string }) {
     if (!this.lspClient) {
       throw new McpError(ErrorCode.InternalError, "LSP client not initialized")
     }
@@ -1557,7 +1319,7 @@ help(${packageName})
   /**
    * Handle LSP diagnostics requests
    */
-  private async handleGetDiagnostics(args: any) {
+  private async handleGetDiagnostics(args: { languageId: string; filePath: string; content: string; projectRoot: string }) {
     if (!this.lspClient) {
       throw new McpError(ErrorCode.InternalError, "LSP client not initialized")
     }
@@ -1607,7 +1369,7 @@ help(${packageName})
 
       if (isInstalled) {
         this.logger.debug(`Using local documentation for ${packageName}`)
-        return await this.getLocalGoDoc(packageName, symbol, projectPath)
+        return await this.getLocalGoDoc(packageName, symbol)
       }
 
       // If not installed, try to fetch from pkg.go.dev
@@ -1649,7 +1411,7 @@ help(${packageName})
         }
 
         return result
-      } catch (error) {
+      } catch {
         // If go doc command fails, suggest installation
         return {
           error: `Package ${packageName} not found. Try installing it with 'go get ${packageName}'`,
@@ -1670,16 +1432,16 @@ help(${packageName})
    * Optimized to return concise results to save LLM context
    */
   private async describePythonPackage(args: PythonDocArgs): Promise<DocResult> {
-    const { package: packageName, symbol, projectPath } = args
+    const { package: packageName, symbol } = args
     this.logger.debug(`Getting Python documentation for ${packageName}${symbol ? `.${symbol}` : ""}`)
 
     try {
       // Check if package is installed locally first
-      const isInstalled = await this.isPythonPackageInstalledLocally(packageName, projectPath)
+      const isInstalled = await this.isPythonPackageInstalledLocally(packageName)
 
       if (isInstalled) {
         this.logger.debug(`Using local documentation for ${packageName}`)
-        return await this.getLocalPythonDoc(packageName, symbol, projectPath)
+        return await this.getLocalPythonDoc(packageName, symbol)
       }
 
       // If not installed, try to fetch from PyPI
@@ -1710,7 +1472,7 @@ help(${packageName})
             suggestInstall: true
           }
         }
-      } catch (error) {
+      } catch {
         // If PyPI request fails, suggest installation
         return {
           error: `Package ${packageName} not found. Try installing it with 'pip install ${packageName}'`,
@@ -1722,6 +1484,76 @@ help(${packageName})
       this.logger.error(`Error getting Python documentation for ${packageName}:`, error)
       return {
         error: `Failed to fetch Python documentation: ${errorMessage}`
+      }
+    }
+  }
+
+  /**
+   * Get documentation for a Rust package
+   */
+  private async describeRustPackage(args: { package: string, version?: string }): Promise<DocResult> {
+    const { package: crateName, version } = args
+    this.logger.debug(`Getting Rust documentation for ${crateName}${version ? ` version ${version}` : ""}`)
+
+    try {
+      // Check if crate is installed locally first
+      const isInstalled = await this.isRustCrateInstalledLocally(crateName)
+
+      if (isInstalled) {
+        this.logger.debug(`Using local documentation for ${crateName}`)
+        return await this.getLocalRustDoc(crateName)
+      }
+
+      // If not installed, try to fetch from docs.rs
+      this.logger.debug(`Fetching Rust documentation for ${crateName} from docs.rs`)
+
+      try {
+        // Get crate details from crates.io
+        const crateDetails = await this.rustDocsHandler.getCrateDetails(crateName)
+
+        // Get documentation from docs.rs
+        const documentation = await this.rustDocsHandler.getCrateDocumentation(crateName, version)
+
+        // Extract a brief description from the documentation
+        const briefDescription = documentation.split('\n\n')[0] || crateDetails.description || `Rust crate: ${crateName}`
+
+        return {
+          description: briefDescription,
+          usage: `## ${crateName} ${crateDetails.versions[0]?.version || ''}
+
+${crateDetails.description || ''}
+
+### Installation
+
+Add this to your Cargo.toml:
+
+\`\`\`toml
+[dependencies]
+${crateName} = "${version || crateDetails.versions[0]?.version || '*'}"
+\`\`\`
+
+### Links
+
+${crateDetails.documentation ? `- [Documentation](${crateDetails.documentation})` : ''}
+${crateDetails.repository ? `- [Repository](${crateDetails.repository})` : ''}
+${crateDetails.homepage ? `- [Homepage](${crateDetails.homepage})` : ''}
+`,
+          example: documentation.includes('# Examples')
+            ? documentation.split('# Examples')[1]?.split('#')[0]?.trim()
+            : undefined
+        }
+      } catch {
+        // If fetching fails, suggest installation
+        return {
+          error: `Crate ${crateName} not found. Try adding it to your Cargo.toml.`,
+          suggestInstall: true
+        }
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      this.logger.error(`Error getting Rust documentation for ${crateName}:`, error)
+      return {
+        error: `Failed to fetch Rust documentation: ${errorMessage}`
       }
     }
   }
@@ -1813,7 +1645,7 @@ help(${packageName})
             `\`\`\``,
           suggestInstall: true
         }
-      } catch (error) {
+      } catch {
         // If fetching fails, suggest installation
         return {
           error: `Package ${packageUrl} not found. Try adding it to your Package.swift.`,

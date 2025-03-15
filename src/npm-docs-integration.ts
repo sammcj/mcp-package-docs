@@ -97,6 +97,7 @@ export class NpmDocsHandler {
     try {
       // Check if package is installed locally first
       const isInstalled = isNpmPackageInstalledLocally(packageName, projectPath);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let packageInfo: any;
       let apiDocumentation: PackageApiDocumentation | undefined;
       let examples: string[] = [];
@@ -120,7 +121,7 @@ export class NpmDocsHandler {
 
               if (existsSync(typesPath)) {
                 const typesContent = readFileSync(typesPath, "utf-8");
-                apiDocumentation = await this.enhancer.extractApiDocumentation(packageName, typesContent, true);
+                apiDocumentation = await this.enhancer.extractApiDocumentation(packageName, typesContent);
 
                 // Add API documentation to the result
                 if (apiDocumentation && apiDocumentation.exports.length > 0) {
@@ -259,6 +260,7 @@ export class NpmDocsHandler {
     try {
       // Check if package is installed locally first
       const isInstalled = isNpmPackageInstalledLocally(packageName, projectPath);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let packageInfo: any;
       let apiDocumentation: PackageApiDocumentation | undefined;
       let examples: string[] = [];
@@ -282,7 +284,7 @@ export class NpmDocsHandler {
 
               if (existsSync(typesPath)) {
                 const typesContent = readFileSync(typesPath, "utf-8");
-                apiDocumentation = await this.enhancer.extractApiDocumentation(packageName, typesContent, true);
+                apiDocumentation = await this.enhancer.extractApiDocumentation(packageName, typesContent);
                 localDoc.apiDocumentation = apiDocumentation;
               }
             }
