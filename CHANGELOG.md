@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.23](https://github.com/sammcj/mcp-package-docs/compare/v0.1.21...v0.1.23) (2025-03-15)
+
+
+### Features
+
+* swift support ([#10](https://github.com/sammcj/mcp-package-docs/issues/10)) ([ba67733](https://github.com/sammcj/mcp-package-docs/commit/ba67733565fd3dc6e9514d7fcaec6656c3f2aa14))
+
+
+### Bug Fixes
+
+* typescript package fixes [#9](https://github.com/sammcj/mcp-package-docs/issues/9) ([f6269c8](https://github.com/sammcj/mcp-package-docs/commit/f6269c822e747c4cdd5cd333e139969104902995))
+
 ### [0.1.22](https://github.com/sammcj/mcp-package-docs/compare/v0.1.21...v0.1.22) (2025-03-15)
 
 
