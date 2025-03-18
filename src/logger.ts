@@ -45,7 +45,7 @@ export class McpLogger {
 }
 
 // Check if we're running as an MCP server
-const isMcpServer = process.env.MCP_SERVER === 'true'
+const isMcpServer = process.env.MCP_SERVER != 'false'
 
 // Create root logger - silent by default when running as MCP server
 export const logger = new McpLogger('MCP', isMcpServer)
