@@ -755,27 +755,240 @@ help(${packageName})
               )
             }
           } else {
-            // Fetch from pkg.go.dev
+            // Fetch from pkg.go.dev using multiple methods
+            let docFetched = false
+
+            // First try using go doc command (works for standard library and cached modules)
             try {
               const { stdout } = await execAsync(`go doc ${packageName}`)
               docContent = this.searchUtils.parseGoDoc(stdout)
-            } catch {
-              // Try to get package info from go.dev API if available
+              docFetched = true
+            } catch (cmdError) {
+              this.logger.debug(`go doc command failed for ${packageName}: ${cmdError}`)
+            }
+
+            // If go doc command fails, try to get package info from pkg.go.dev API
+            if (!docFetched) {
               try {
                 const url = `https://pkg.go.dev/api/packages/${encodeURIComponent(packageName)}`
-                const response = await axios.get(url).catch(() => null)
-                if (response && response.data) {
+                this.logger.debug(`Fetching from pkg.go.dev API: ${url}`)
+
+                const response = await axios.get(url)
+
+                if (response.data) {
                   packageInfo = response.data
-                  if (packageInfo.Documentation) {
+                  if (packageInfo.Documentation || packageInfo.Synopsis) {
                     docContent = [
-                      { content: packageInfo.Synopsis || "", type: "description" },
+                      { content: packageInfo.Synopsis || `Go package: ${packageName}`, type: "description" },
                       { content: packageInfo.Documentation || "", type: "documentation" }
                     ]
+                    docFetched = true
                   }
                 }
               } catch (apiError) {
-                this.logger.error(`Error fetching Go package info: ${apiError}`)
+                this.logger.debug(`Error fetching from pkg.go.dev API: ${apiError}`)
               }
+            }
+
+            // If API fails, try to fetch from GitHub if it's a GitHub URL
+            if (!docFetched && packageName.includes('github.com')) {
+              try {
+                // Extract GitHub owner and repo from the package name
+                const githubMatch = packageName.match(/github\.com\/([^\/]+)\/([^\/]+)/)
+                if (githubMatch) {
+                  const owner = githubMatch[1]
+                  const repo = githubMatch[2]
+
+                  // Try to fetch README.md from the main branch
+                  const readmeUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/README.md`
+                  this.logger.debug(`Attempting to fetch README from GitHub for search: ${readmeUrl}`)
+
+                  const readmeResponse = await axios.get(readmeUrl)
+                  if (readmeResponse.data) {
+                    const readme = readmeResponse.data
+
+                    // Parse the README content into sections
+                    const sections = readme.split(/#+\s/)
+
+                    // Create structured content from README sections
+                    docContent = []
+
+                    // Add a general description section
+                    if (sections.length > 0) {
+                      docContent.push({
+                        content: sections[0],
+                        type: "description"
+                      })
+                    }
+
+                    // Process each section
+                    for (let i = 1; i < sections.length; i++) {
+                      const section = sections[i]
+                      if (!section.trim()) continue
+
+                      const lines = section.split('\n')
+                      const heading = lines[0].toLowerCase()
+
+                      // Determine section type
+                      let type = "general"
+                      if (heading.includes("example") || heading.includes("usage example")) {
+                        type = "example"
+                      } else if (heading.includes("usage") || heading.includes("getting started") ||
+                                heading.includes("quickstart") || heading.includes("installation")) {
+                        type = "usage"
+                      } else if (heading.includes("api") || heading.includes("reference") ||
+                                heading.includes("function") || heading.includes("method")) {
+                        type = "api"
+                      } else if (heading.includes("config") || heading.includes("configuration")) {
+                        type = "configuration"
+                      }
+
+                      docContent.push({
+                        content: section,
+                        type: type
+                      })
+                    }
+
+                    // Add import example
+                    docContent.push({
+                      content: `// Import the package\nimport "${packageName}"\n\n// For more details, visit: https://pkg.go.dev/${encodeURIComponent(packageName)}`,
+                      type: "example"
+                    })
+
+                    docFetched = true
+                  }
+                }
+              } catch (githubError) {
+                this.logger.debug(`Error fetching from GitHub for search: ${githubError}`)
+              }
+            }
+
+            // If GitHub fetch fails or it's not a GitHub URL, try web scraping approach
+            if (!docFetched) {
+              try {
+                const url = `https://pkg.go.dev/${encodeURIComponent(packageName)}`
+                this.logger.debug(`Attempting to fetch documentation from: ${url}`)
+
+                const response = await axios.get(url)
+
+                if (response.data) {
+                  // Extract basic package information from HTML
+                  const html = response.data
+
+                  // Simple extraction of package description
+                  const descriptionMatch = html.match(/<meta name="description" content="([^"]+)"/)
+                  const description = descriptionMatch ? descriptionMatch[1] : `Go package: ${packageName}`
+
+                  // Try to extract documentation content
+                  const docMatch = html.match(/<div class="Documentation-content">[\s\S]*?<\/div>/)
+                  let documentation = docMatch ? docMatch[0] : ""
+
+                  // Try to extract package overview
+                  const overviewMatch = html.match(/<section id="pkg-overview"[\s\S]*?<\/section>/)
+                  const overview = overviewMatch ? overviewMatch[0] : ""
+
+                  // Try to extract constants
+                  const constantsMatch = html.match(/<section id="pkg-constants"[\s\S]*?<\/section>/)
+                  const constants = constantsMatch ? constantsMatch[0] : ""
+
+                  // Try to extract variables
+                  const variablesMatch = html.match(/<section id="pkg-variables"[\s\S]*?<\/section>/)
+                  const variables = variablesMatch ? variablesMatch[0] : ""
+
+                  // Try to extract functions
+                  const functionsMatch = html.match(/<section id="pkg-functions"[\s\S]*?<\/section>/)
+                  const functions = functionsMatch ? functionsMatch[0] : ""
+
+                  // Try to extract types
+                  const typesMatch = html.match(/<section id="pkg-types"[\s\S]*?<\/section>/)
+                  const types = typesMatch ? typesMatch[0] : ""
+
+                  // Extract code examples if available
+                  const examplesMatch = html.match(/<pre class="Documentation-exampleCode">[\s\S]*?<\/pre>/g)
+                  const examples = examplesMatch ? examplesMatch.join("\n\n") : ""
+
+                  // Extract API documentation - look for function and type definitions
+                  const apiDocsMatch = html.match(/<h3 id="[^"]*">[\s\S]*?<pre[\s\S]*?<\/pre>/g) || []
+                  const apiDocs = apiDocsMatch.join("\n\n")
+
+                  // Extract function signatures
+                  const funcSignatures: string[] = []
+                  const funcSignatureMatches = html.matchAll(/<h3 id="([^"]*)">func\s+([^<]+)<\/h3>/g)
+                  for (const match of funcSignatureMatches) {
+                    funcSignatures.push(`func ${match[2]}`)
+                  }
+
+                  // Extract type definitions
+                  const typeDefinitions: string[] = []
+                  const typeDefMatches = html.matchAll(/<h3 id="([^"]*)">type\s+([^<]+)<\/h3>/g)
+                  for (const match of typeDefMatches) {
+                    typeDefinitions.push(`type ${match[2]}`)
+                  }
+
+                  // Clean up HTML tags from the extracted content
+                  const cleanHtml = (html: string): string => {
+                    return html
+                      .replace(/<[^>]*>/g, '') // Remove HTML tags
+                      .replace(/&lt;/g, '<')   // Replace HTML entities
+                      .replace(/&gt;/g, '>')
+                      .replace(/&amp;/g, '&')
+                      .replace(/&quot;/g, '"')
+                      .replace(/&#39;/g, "'")
+                      .replace(/\s+/g, ' ')    // Normalize whitespace
+                      .trim();
+                  };
+
+                  // Combine all the extracted content
+                  documentation = [
+                    overview ? cleanHtml(overview) : "",
+                    constants ? cleanHtml(constants) : "",
+                    variables ? cleanHtml(variables) : "",
+                    functions ? cleanHtml(functions) : "",
+                    types ? cleanHtml(types) : "",
+                    documentation ? cleanHtml(documentation) : "",
+                    apiDocs ? cleanHtml(apiDocs) : "",
+                    funcSignatures.length > 0 ? "Function Signatures:\n" + funcSignatures.join("\n") : "",
+                    typeDefinitions.length > 0 ? "Type Definitions:\n" + typeDefinitions.join("\n") : ""
+                  ].filter(Boolean).join("\n\n");
+
+                  // Create content sections
+                  docContent = [
+                    { content: description, type: "description" },
+                    { content: documentation, type: "documentation" }
+                  ];
+
+                  // Add examples if available
+                  if (examples) {
+                    docContent.push({
+                      content: examples,
+                      type: "example"
+                    });
+                  } else {
+                    // Add default example
+                    docContent.push({
+                      content: `// Import the package\nimport "${packageName}"\n\n// For more details, visit: https://pkg.go.dev/${encodeURIComponent(packageName)}`,
+                      type: "example"
+                    });
+                  }
+                  docFetched = true
+                }
+              } catch (webError) {
+                this.logger.debug(`Error fetching from pkg.go.dev website: ${webError}`)
+              }
+            }
+
+            // If all methods fail, create minimal content to avoid returning an error
+            if (!docFetched) {
+              docContent = [
+                {
+                  content: `Go package: ${packageName}\n\nThis package is available on pkg.go.dev but detailed documentation could not be retrieved.`,
+                  type: "description"
+                },
+                {
+                  content: `// Import the package\nimport "${packageName}"\n\n// For more details, visit: https://pkg.go.dev/${encodeURIComponent(packageName)}`,
+                  type: "example"
+                }
+              ]
             }
           }
           break
@@ -1376,6 +1589,7 @@ help(${packageName})
       this.logger.debug(`Fetching Go documentation for ${packageName} from pkg.go.dev`)
 
       try {
+        // First try using go doc command (works for standard library and cached modules)
         const cmd = symbol
           ? `go doc ${packageName}.${symbol}`
           : `go doc ${packageName}`
@@ -1412,10 +1626,190 @@ help(${packageName})
 
         return result
       } catch {
-        // If go doc command fails, suggest installation
+        // If go doc command fails, try to fetch from pkg.go.dev API
+        try {
+          const url = `https://pkg.go.dev/api/packages/${encodeURIComponent(packageName)}`
+          this.logger.debug(`Fetching from pkg.go.dev API: ${url}`)
+
+          const response = await axios.get(url)
+
+          if (response.data) {
+            const pkgInfo = response.data
+
+            // Create a structured result from the API response
+            const result: DocResult = {
+              description: pkgInfo.Synopsis || `Go package: ${packageName}`
+            }
+
+            // Add documentation if available
+            if (pkgInfo.Documentation) {
+              result.usage = pkgInfo.Documentation
+            }
+
+            // Add import example
+            result.example = `// Import the package
+import "${packageName}"
+
+// See full documentation at: https://pkg.go.dev/${encodeURIComponent(packageName)}`
+
+            return result
+          }
+        } catch (apiError) {
+          this.logger.error(`Error fetching from pkg.go.dev API: ${apiError}`)
+        }
+
+        // If both methods fail, try to fetch from GitHub if it's a GitHub URL
+        if (packageName.includes('github.com')) {
+          try {
+            // Extract GitHub owner and repo from the package name
+            const githubMatch = packageName.match(/github\.com\/([^\/]+)\/([^\/]+)/)
+            if (githubMatch) {
+              const owner = githubMatch[1]
+              const repo = githubMatch[2]
+
+              // Try to fetch README.md from the main branch
+              const readmeUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/README.md`
+              this.logger.debug(`Attempting to fetch README from GitHub: ${readmeUrl}`)
+
+              const readmeResponse = await axios.get(readmeUrl)
+              if (readmeResponse.data) {
+                const readme = readmeResponse.data
+
+                // Parse the README content
+                const sections = readme.split(/#+\s/)
+                let description = ""
+                let usage = ""
+                let example = ""
+
+                // Extract relevant sections
+                for (const section of sections) {
+                  const lower = section.toLowerCase()
+                  if (lower.startsWith("introduction") || lower.startsWith("about") ||
+                      lower.startsWith("overview") || lower.startsWith("description")) {
+                    description = section
+                  } else if (lower.startsWith("usage") || lower.startsWith("getting started") ||
+                            lower.startsWith("quickstart") || lower.startsWith("installation")) {
+                    usage = section
+                  } else if (lower.startsWith("example")) {
+                    example = section
+                  }
+                }
+
+                // If we couldn't find a description section, use the first section
+                if (!description && sections.length > 1) {
+                  description = sections[1]
+                }
+
+                // Format the description
+                const formattedDescription = description ?
+                  description.split("\n").slice(0, 3).join("\n").trim() :
+                  `Go package: ${packageName}`
+
+                // Format the usage
+                const formattedUsage = usage ?
+                  usage :
+                  `For detailed documentation, visit: https://pkg.go.dev/${encodeURIComponent(packageName)}`
+
+                // Format the example
+                const formattedExample = example ?
+                  example :
+                  `// Import the package\nimport "${packageName}"\n\n// For more details, visit: https://pkg.go.dev/${encodeURIComponent(packageName)}`
+
+                return {
+                  description: formattedDescription,
+                  usage: formattedUsage,
+                  example: formattedExample
+                }
+              }
+            }
+          } catch (githubError) {
+            this.logger.error(`Error fetching from GitHub: ${githubError}`)
+          }
+        }
+
+        // If GitHub fetch fails or it's not a GitHub URL, try web scraping approach
+        try {
+          const url = `https://pkg.go.dev/${encodeURIComponent(packageName)}`
+          this.logger.debug(`Attempting to fetch documentation from: ${url}`)
+
+          const response = await axios.get(url)
+
+          if (response.data) {
+            // Extract basic package information from HTML
+            const html = response.data
+
+            // Simple extraction of package description
+            const descriptionMatch = html.match(/<meta name="description" content="([^"]+)"/)
+            const description = descriptionMatch ? descriptionMatch[1] : `Go package: ${packageName}`
+
+            // Try to extract documentation content
+            const docMatch = html.match(/<div class="Documentation-content">[\s\S]*?<\/div>/)
+            const documentation = docMatch ? docMatch[0] : ""
+
+            // Try to extract package overview
+            const overviewMatch = html.match(/<section id="pkg-overview"[\s\S]*?<\/section>/)
+            const overview = overviewMatch ? overviewMatch[0] : ""
+
+            // Extract function signatures
+            const funcSignatures: string[] = []
+            const funcSignatureMatches = html.matchAll(/<h3 id="([^"]*)">func\s+([^<]+)<\/h3>/g)
+            for (const match of funcSignatureMatches) {
+              funcSignatures.push(`func ${match[2]}`)
+            }
+
+            // Extract type definitions
+            const typeDefinitions: string[] = []
+            const typeDefMatches = html.matchAll(/<h3 id="([^"]*)">type\s+([^<]+)<\/h3>/g)
+            for (const match of typeDefMatches) {
+              typeDefinitions.push(`type ${match[2]}`)
+            }
+
+            // Extract code examples if available
+            const examplesMatch = html.match(/<pre class="Documentation-exampleCode">[\s\S]*?<\/pre>/g)
+            const examples = examplesMatch ? examplesMatch.join("\n\n") : ""
+
+            // Clean up HTML tags from the extracted content
+            const cleanHtml = (html: string): string => {
+              return html
+                .replace(/<[^>]*>/g, '') // Remove HTML tags
+                .replace(/&lt;/g, '<')   // Replace HTML entities
+                .replace(/&gt;/g, '>')
+                .replace(/&amp;/g, '&')
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'")
+                .replace(/\s+/g, ' ')    // Normalize whitespace
+                .trim();
+            };
+
+            // Combine all the extracted content for usage
+            const usage = [
+              overview ? cleanHtml(overview) : "",
+              documentation ? cleanHtml(documentation) : "",
+              funcSignatures.length > 0 ? "## Function Signatures\n" + funcSignatures.join("\n") : "",
+              typeDefinitions.length > 0 ? "## Type Definitions\n" + typeDefinitions.join("\n") : ""
+            ].filter(Boolean).join("\n\n");
+
+            // Create example content
+            const example = examples || `// Import the package
+import "${packageName}"
+
+// For more details, visit: https://pkg.go.dev/${encodeURIComponent(packageName)}`
+
+            return {
+              description,
+              usage: usage || `For detailed documentation, visit: https://pkg.go.dev/${encodeURIComponent(packageName)}`,
+              example
+            }
+          }
+        } catch (webError) {
+          this.logger.error(`Error fetching from pkg.go.dev website: ${webError}`)
+        }
+
+        // If all methods fail, return a more helpful error
         return {
-          error: `Package ${packageName} not found. Try installing it with 'go get ${packageName}'`,
-          suggestInstall: true
+          description: `Go package: ${packageName}`,
+          error: `Could not fetch detailed documentation for ${packageName}. You can view it online at https://pkg.go.dev/${encodeURIComponent(packageName)}`,
+          suggestInstall: false
         }
       }
     } catch (error) {
