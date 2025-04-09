@@ -63,8 +63,8 @@ This document outlines the plan to rewrite the existing TypeScript-based MCP Pac
 **5. Tool Handler Implementation & Wiring:** (Likely modifying the main server file and potentially adding handler files)
 
 * [x] Implement handlers for `describe_go_package` (using core utilities).
-* [ ] Implement handlers for `describe_python_package` (using core utilities).
-* [ ] Implement handlers for `describe_rust_package` (using core utilities, HTML parsing).
+* [x] Implement handlers for `describe_python_package` (using core utilities).
+* [x] Implement handlers for `describe_rust_package` (using core utilities, HTML parsing).
 * [ ] Implement handlers for `describe_swift_package` (using core utilities).
 * [x] Implement handlers for `describe_npm_package` (integrating core utilities, parsing, and enhanced NPM logic).
 * [x] Implement handlers for `get_npm_package_doc` (integrating core utilities, parsing, and enhanced NPM logic).

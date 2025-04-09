@@ -248,7 +248,13 @@ func setupToolHandlers(srv *server.MCPServer, logger *log.Logger, cache *Cache) 
 			result, err = goHandler.SearchPackage(ctx, packageName, query, fuzzySearch)
 		case "npm":
 			result, err = npmHandler.SearchPackage(ctx, packageName, query, fuzzySearch, projectPath)
-		case "python", "rust", "swift":
+		case "python":
+			pythonHandler := handlers.NewPythonHandler(cmdRunner, httpClient, fsUtils)
+			result, err = pythonHandler.SearchPackage(ctx, packageName, query, fuzzySearch)
+		case "rust":
+			rustHandler := handlers.NewRustHandler(cmdRunner, httpClient, fsUtils)
+			result, err = rustHandler.SearchPackage(ctx, packageName, query, fuzzySearch)
+		case "swift":
 			return mcp.NewToolResultText(fmt.Sprintf("Search for %s packages is not yet implemented", language)), nil
 		default:
 			return nil, fmt.Errorf("unsupported language: %s", language)
@@ -287,13 +293,56 @@ func setupToolHandlers(srv *server.MCPServer, logger *log.Logger, cache *Cache) 
 	})
 
 	srv.AddTool(describePythonPackageTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// TODO: Implement describe_python_package handler
-		return mcp.NewToolResultText("Python package documentation functionality not yet implemented"), nil
+		// Extract parameters
+		packageName, ok := request.Params.Arguments["package"].(string)
+		if !ok || packageName == "" {
+			return nil, fmt.Errorf("package parameter is required")
+		}
+
+		// Extract optional parameters
+		var symbol, projectPath string
+		if symbolVal, ok := request.Params.Arguments["symbol"].(string); ok {
+			symbol = symbolVal
+		}
+		if projectPathVal, ok := request.Params.Arguments["projectPath"].(string); ok {
+			projectPath = projectPathVal
+		}
+
+		// Initialize Python handler
+		pythonHandler := handlers.NewPythonHandler(cmdRunner, httpClient, fsUtils)
+
+		// Get package documentation
+		result, err := pythonHandler.DescribePackage(ctx, packageName, symbol, projectPath)
+		if err != nil {
+			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(result), nil
 	})
 
 	srv.AddTool(describeRustPackageTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// TODO: Implement describe_rust_package handler
-		return mcp.NewToolResultText("Rust package documentation functionality not yet implemented"), nil
+		// Extract parameters
+		packageName, ok := request.Params.Arguments["package"].(string)
+		if !ok || packageName == "" {
+			return nil, fmt.Errorf("package parameter is required")
+		}
+
+		// Extract optional parameters
+		var version string
+		if versionVal, ok := request.Params.Arguments["version"].(string); ok {
+			version = versionVal
+		}
+
+		// Initialize Rust handler
+		rustHandler := handlers.NewRustHandler(cmdRunner, httpClient, fsUtils)
+
+		// Get package documentation
+		result, err := rustHandler.DescribePackage(ctx, packageName, version)
+		if err != nil {
+			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(result), nil
 	})
 
 	srv.AddTool(describeNpmPackageTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -415,8 +464,33 @@ func setupToolHandlers(srv *server.MCPServer, logger *log.Logger, cache *Cache) 
 			mcp.Description("Optional path to project directory for local .npmrc files"),
 		),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Redirect to describe_python_package handler
-		return mcp.NewToolResultText("This tool is deprecated. Please use describe_python_package instead."), nil
+		// Extract parameters
+		packageName, ok := request.Params.Arguments["package"].(string)
+		if !ok || packageName == "" {
+			return nil, fmt.Errorf("package parameter is required")
+		}
+
+		// Extract optional parameters
+		var symbol, projectPath string
+		if symbolVal, ok := request.Params.Arguments["symbol"].(string); ok {
+			symbol = symbolVal
+		}
+		if projectPathVal, ok := request.Params.Arguments["projectPath"].(string); ok {
+			projectPath = projectPathVal
+		}
+
+		// Initialize Python handler
+		pythonHandler := handlers.NewPythonHandler(cmdRunner, httpClient, fsUtils)
+
+		// Get package documentation
+		result, err := pythonHandler.DescribePackage(ctx, packageName, symbol, projectPath)
+		if err != nil {
+			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
+		}
+
+		// Add deprecation notice
+		deprecationNotice := "⚠️ This tool is deprecated. Please use describe_python_package instead.\n\n"
+		return mcp.NewToolResultText(deprecationNotice + result), nil
 	})
 
 	srv.AddTool(mcp.NewTool("lookup_npm_doc",
