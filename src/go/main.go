@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/sammcj/mcp-package-docs/src/go/handlers"
+	"github.com/sammcj/mcp-package-docs/src/go/utils"
 )
 
 // Version is set during build
@@ -75,6 +78,18 @@ type DocResult struct {
 
 // setupToolHandlers registers all tool handlers with the server
 func setupToolHandlers(srv *server.MCPServer, logger *log.Logger, cache *Cache) {
+	// Create utility instances
+	cmdRunner := utils.NewCommandRunner()
+	httpClient := utils.NewHTTPClient()
+	fsUtils, err := utils.NewFileSystemUtils()
+	if err != nil {
+		logger.Fatalf("Failed to create file system utils: %v", err)
+	}
+	npmrcParser := utils.NewNPMRCParser(fsUtils)
+
+	// Initialize handlers
+	npmHandler := handlers.NewNPMHandler(cmdRunner, httpClient, fsUtils, npmrcParser)
+	goHandler := handlers.NewGoHandler(cmdRunner, httpClient, fsUtils)
 	// Define search_package_docs tool
 	searchPackageDocsTool := mcp.NewTool("search_package_docs",
 		mcp.WithDescription("Search within package documentation"),
@@ -202,8 +217,28 @@ func setupToolHandlers(srv *server.MCPServer, logger *log.Logger, cache *Cache) 
 	})
 
 	srv.AddTool(describeGoPackageTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// TODO: Implement describe_go_package handler
-		return mcp.NewToolResultText("Go package documentation functionality not yet implemented"), nil
+		// Extract parameters
+		packageName, ok := request.Params.Arguments["package"].(string)
+		if !ok || packageName == "" {
+			return nil, fmt.Errorf("package parameter is required")
+		}
+
+		// Extract optional parameters
+		var symbol, projectPath string
+		if symbolVal, ok := request.Params.Arguments["symbol"].(string); ok {
+			symbol = symbolVal
+		}
+		if projectPathVal, ok := request.Params.Arguments["projectPath"].(string); ok {
+			projectPath = projectPathVal
+		}
+
+		// Get package documentation
+		result, err := goHandler.DescribePackage(ctx, packageName, symbol, projectPath)
+		if err != nil {
+			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(result), nil
 	})
 
 	srv.AddTool(describePythonPackageTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -217,8 +252,28 @@ func setupToolHandlers(srv *server.MCPServer, logger *log.Logger, cache *Cache) 
 	})
 
 	srv.AddTool(describeNpmPackageTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// TODO: Implement describe_npm_package handler
-		return mcp.NewToolResultText("NPM package documentation functionality not yet implemented"), nil
+		// Extract parameters
+		packageName, ok := request.Params.Arguments["package"].(string)
+		if !ok || packageName == "" {
+			return nil, fmt.Errorf("package parameter is required")
+		}
+
+		// Extract optional parameters
+		var version, projectPath string
+		if versionVal, ok := request.Params.Arguments["version"].(string); ok {
+			version = versionVal
+		}
+		if projectPathVal, ok := request.Params.Arguments["projectPath"].(string); ok {
+			projectPath = projectPathVal
+		}
+
+		// Get package documentation
+		result, err := npmHandler.DescribePackage(ctx, packageName, version, projectPath)
+		if err != nil {
+			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(result), nil
 	})
 
 	srv.AddTool(describeSwiftPackageTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -227,8 +282,39 @@ func setupToolHandlers(srv *server.MCPServer, logger *log.Logger, cache *Cache) 
 	})
 
 	srv.AddTool(getNpmPackageDocTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// TODO: Implement get_npm_package_doc handler
-		return mcp.NewToolResultText("NPM package full documentation functionality not yet implemented"), nil
+		// Extract parameters
+		packageName, ok := request.Params.Arguments["package"].(string)
+		if !ok || packageName == "" {
+			return nil, fmt.Errorf("package parameter is required")
+		}
+
+		// Extract optional parameters
+		var version, projectPath, section, query string
+		var maxLength int
+
+		if versionVal, ok := request.Params.Arguments["version"].(string); ok {
+			version = versionVal
+		}
+		if projectPathVal, ok := request.Params.Arguments["projectPath"].(string); ok {
+			projectPath = projectPathVal
+		}
+		if sectionVal, ok := request.Params.Arguments["section"].(string); ok {
+			section = sectionVal
+		}
+		if queryVal, ok := request.Params.Arguments["query"].(string); ok {
+			query = queryVal
+		}
+		if maxLengthVal, ok := request.Params.Arguments["maxLength"].(float64); ok {
+			maxLength = int(maxLengthVal)
+		}
+
+		// Get package documentation
+		result, err := npmHandler.GetPackageDocumentation(ctx, packageName, version, projectPath, section, maxLength, query)
+		if err != nil {
+			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(result), nil
 	})
 
 	// Add legacy tool aliases
