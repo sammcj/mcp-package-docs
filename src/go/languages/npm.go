@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/sammcj/mcp-package-docs/src/go/parsing"
-	"github.com/sammcj/mcp-package-docs/src/go/utils"
+	"github.com/sammcj/mcp-package-docs/parsing"
+	"github.com/sammcj/mcp-package-docs/utils"
 )
 
 // NPMPackageInfo represents information about an NPM package
