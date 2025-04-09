@@ -27,20 +27,27 @@ This document outlines the plan to rewrite the existing TypeScript-based MCP Pac
 
 **1. Project Setup & Server Foundation:**
 
-* [ ] Initialise Go module.
+* [x] Initialise Go module.
 * [ ] Add core dependencies (`mcp-go`, `goquery`, HTML-to-Markdown lib, `goldmark`, fuzzy search lib).
-* [ ] Set up basic MCP server structure using `server.NewMCPServer` (e.g., in `main.go` or `server/server.go`).
-* [ ] Define core tool schemas (`search_package_docs`, `describe_*`, `get_npm_package_doc`) using `mcp.NewTool` (likely near server setup).
-* [ ] Implement basic stdio transport using `server.ServeStdio` (likely in `main.go`).
-* [ ] Implement logging to stderr using Go standard library (could be a separate `logger` package or integrated early).
-* [ ] Implement in-memory caching for tool results (could be part of the server struct or a `cache` package).
+* [x] Set up basic MCP server structure using `server.NewMCPServer` (e.g., in `main.go` or `server/server.go`).
+  * Use `server.NewMCPServer` with server name and version
+  * Add server capabilities with `server.WithToolsCapabilities()`
+  * For logging, use `server.WithLogging()` option or implement custom logging
+* [x] Define core tool schemas (`search_package_docs`, `describe_*`, `get_npm_package_doc`) using `mcp.NewTool` with appropriate options:
+  * Use `mcp.WithDescription()` for tool descriptions
+  * Use `mcp.WithString()`, `mcp.WithNumber()`, etc. for parameters
+  * Use `mcp.Required()` for required parameters
+  * Use `mcp.Description()` for parameter descriptions
+* [x] Implement basic stdio transport using `server.ServeStdio` (likely in `main.go`).
+* [x] Implement logging to stderr using Go standard library (could be a separate `logger` package or integrated early).
+* [x] Implement in-memory caching for tool results (could be part of the server struct or a `cache` package).
 
 **2. Core Utilities Implementation:** (These might become separate utility files/packages)
 
-* [ ] Implement HTTP client logic using `net/http` (e.g., `utils/http_client.go`).
-* [ ] Implement command execution logic using `os/exec` (e.g., `utils/cmd_runner.go`).
-* [ ] Implement file system checks using `os` package (e.g., `utils/fs_utils.go`).
-* [ ] Implement `.npmrc` parsing logic in Go (e.g., `utils/npmrc_parser.go`).
+* [x] Implement HTTP client logic using `net/http` (e.g., `utils/http_client.go`).
+* [x] Implement command execution logic using `os/exec` (e.g., `utils/cmd_runner.go`).
+* [x] Implement file system checks using `os` package (e.g., `utils/fs_utils.go`).
+* [x] Implement `.npmrc` parsing logic in Go (e.g., `utils/npmrc_parser.go`).
 
 **3. Parsing Logic Implementation:** (These might become separate `parsing` package/files)
 
@@ -62,7 +69,11 @@ This document outlines the plan to rewrite the existing TypeScript-based MCP Pac
 * [ ] Implement handlers for `describe_npm_package` (integrating core utilities, parsing, and enhanced NPM logic).
 * [ ] Implement handlers for `get_npm_package_doc` (integrating core utilities, parsing, and enhanced NPM logic).
 * [ ] Implement handlers for `search_package_docs` (integrating all fetching, parsing, search).
-* [ ] Register all handlers with the server (`server.AddTool` likely in the main server file).
+* [ ] Register all handlers with the server using `server.AddTool(tool, handlerFunc)` where:
+  * `tool` is the tool definition created with `mcp.NewTool`
+  * `handlerFunc` is a function with signature `func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)`
+  * Handler functions should extract parameters from `request.Params.Arguments`
+  * Return results using `mcp.NewToolResultText()` or custom `mcp.CallToolResult` structs
 
 **6. Github Actions and Makefile Setup:**
 
@@ -71,9 +82,45 @@ This document outlines the plan to rewrite the existing TypeScript-based MCP Pac
 
 After completing a phase you should check off the completed items, if new work is discovered that must be completed in the next phase that's not already documented add it to the list and mark it as a new item. Then stop and wait for the user to review the work and plan.
 
+## Progress Summary (10/04/2025)
+
+### Completed Items
+- [x] Initialised Go module
+- [x] Set up basic MCP server structure using `server.NewMCPServer`
+- [x] Defined core tool schemas for all required tools
+- [x] Implemented basic stdio transport using `server.ServeStdio`
+- [x] Implemented logging to stderr
+- [x] Implemented in-memory caching for tool results
+- [x] Implemented core utilities:
+  - HTTP client logic (`utils/http_client.go`)
+  - Command execution logic (`utils/cmd_runner.go`)
+  - File system checks (`utils/fs_utils.go`)
+  - `.npmrc` parsing logic (`utils/npmrc_parser.go`)
+
+### Next Steps
+1. Add remaining core dependencies (`goquery`, HTML-to-Markdown lib, `goldmark`, fuzzy search lib)
+2. Implement parsing logic (HTML processing, Markdown processing, fuzzy search)
+3. Implement language-specific logic, starting with NPM
+4. Implement tool handlers for each tool
+
 ## IMPORTANT INFORMATION
 
 The implementation MUST be MCP compliant, meaning when running in stdio mode it must don't output anything to stdout or stderr unless it's a valid MCP response, do not log to stderr or stdout as it will invalidate the MCP response.
+
+### Additional Implementation Notes
+
+1. **Server Context**: Use `server.ServerFromContext(ctx)` within handlers to access the server instance if needed (e.g., for sending notifications).
+
+2. **Error Handling**: Return errors from handlers using standard Go errors or create custom error responses with `mcp.CallToolResult` with `isError: true`.
+
+3. **Tool Result Types**:
+   - Text results: `mcp.NewToolResultText("Your text here")`
+   - Multiple content types: Create a `mcp.CallToolResult` with an array of different content types (text, images, etc.)
+   - JSON results: Convert to string and use `mcp.NewToolResultText(jsonString)`
+
+4. **Request Hooks**: Consider using `server.WithHooks()` for debugging during development, but ensure they don't output to stdout in production.
+
+5. **Capabilities**: Only declare capabilities that are actually implemented. For the initial version, focus on tools capability only.
 
 ---
 
