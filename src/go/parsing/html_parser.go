@@ -50,7 +50,7 @@ func (p *HTMLParser) ExtractMainContent(doc *goquery.Document) string {
 	for _, selector := range mainSelectors {
 		if selection := doc.Find(selector).First(); selection.Length() > 0 {
 			// Clone the selection to avoid modifying the original document
-			clone := goquery.CloneDocument(selection)
+			clone := selection.Clone()
 
 			// Remove common non-content elements
 			clone.Find("nav, header, footer, .navigation, .sidebar, .menu, .ads, .comments").Remove()
@@ -65,15 +65,15 @@ func (p *HTMLParser) ExtractMainContent(doc *goquery.Document) string {
 
 	// If no main content container was found, use the body
 	if mainContent == "" {
-		// Clone the body to avoid modifying the original document
-		body := doc.Find("body").First()
-		if body.Length() > 0 {
-			clone := goquery.CloneDocument(body)
+			// Clone the body to avoid modifying the original document
+			body := doc.Find("body").First()
+			if body.Length() > 0 {
+				clone := body.Clone()
 
-			// Remove common non-content elements
-			clone.Find("nav, header, footer, .navigation, .sidebar, .menu, .ads, .comments").Remove()
+				// Remove common non-content elements
+				clone.Find("nav, header, footer, .navigation, .sidebar, .menu, .ads, .comments").Remove()
 
-			html, err := clone.Html()
+				html, err := clone.Html()
 			if err == nil {
 				mainContent = html
 			}
