@@ -28,7 +28,7 @@ This document outlines the plan to rewrite the existing TypeScript-based MCP Pac
 **1. Project Setup & Server Foundation:**
 
 * [x] Initialise Go module.
-* [ ] Add core dependencies (`mcp-go`, `goquery`, HTML-to-Markdown lib, `goldmark`, fuzzy search lib).
+* [x] Add core dependencies (`mcp-go`, `goquery`, HTML-to-Markdown lib, `goldmark`, fuzzy search lib).
 * [x] Set up basic MCP server structure using `server.NewMCPServer` (e.g., in `main.go` or `server/server.go`).
   * Use `server.NewMCPServer` with server name and version
   * Add server capabilities with `server.WithToolsCapabilities()`
@@ -51,14 +51,14 @@ This document outlines the plan to rewrite the existing TypeScript-based MCP Pac
 
 **3. Parsing Logic Implementation:** (These might become separate `parsing` package/files)
 
-* [ ] Implement HTML processing (using `goquery` and HTML-to-Markdown lib).
-* [ ] Implement Markdown processing (using `yuin/goldmark` AST traversal for filtering and basic extraction).
-* [ ] Implement fuzzy search using a Go library (could be part of `parsing` or `utils`).
+* [x] Implement HTML processing (using `goquery` and HTML-to-Markdown lib).
+* [x] Implement Markdown processing (using `yuin/goldmark` AST traversal for filtering and basic extraction).
+* [x] Implement fuzzy search using a Go library (could be part of `parsing` or `utils`).
 
 **4. Language-Specific Logic (NPM Focus):** (Likely a dedicated `npm` package/module)
 
-* [ ] **Enhanced NPM:** Implement logic to discover additional docs/examples (using core utilities).
-* [ ] **Enhanced NPM:** Implement logic to fetch and parse discovered Markdown docs and code examples (using parsing logic).
+* [x] **Enhanced NPM:** Implement logic to discover additional docs/examples (using core utilities).
+* [x] **Enhanced NPM:** Implement logic to fetch and parse discovered Markdown docs and code examples (using parsing logic).
 
 **5. Tool Handler Implementation & Wiring:** (Likely modifying the main server file and potentially adding handler files)
 
@@ -86,6 +86,12 @@ After completing a phase you should check off the completed items, if new work i
 
 ### Completed Items
 - [x] Initialised Go module
+- [x] Added core dependencies:
+  - `mcp-go` for the server framework
+  - `goquery` for HTML parsing
+  - `html-to-markdown` for converting HTML to Markdown
+  - `goldmark` for Markdown processing
+  - `fuzzysearch` for fuzzy search functionality
 - [x] Set up basic MCP server structure using `server.NewMCPServer`
 - [x] Defined core tool schemas for all required tools
 - [x] Implemented basic stdio transport using `server.ServeStdio`
@@ -96,12 +102,19 @@ After completing a phase you should check off the completed items, if new work i
   - Command execution logic (`utils/cmd_runner.go`)
   - File system checks (`utils/fs_utils.go`)
   - `.npmrc` parsing logic (`utils/npmrc_parser.go`)
+- [x] Implemented parsing logic:
+  - HTML processing (`parsing/html_parser.go`)
+  - Markdown processing (`parsing/markdown_parser.go`)
+  - Fuzzy search functionality (`parsing/search.go`)
+- [x] Started implementing language-specific logic:
+  - NPM package handler (`handlers/npm_handler.go`)
+- [x] Fixed module path issues by updating the go.mod file to use the correct module path
 
 ### Next Steps
-1. Add remaining core dependencies (`goquery`, HTML-to-Markdown lib, `goldmark`, fuzzy search lib)
-2. Implement parsing logic (HTML processing, Markdown processing, fuzzy search)
-3. Implement language-specific logic, starting with NPM
-4. Implement tool handlers for each tool
+1. Complete the implementation of tool handlers for each tool
+2. Implement handlers for other language-specific logic (Go, Python, Rust, Swift)
+3. Set up a basic `Makefile` for lint, build, test and version commands
+4. Ensure that the release process includes updating the version both in the tags and the version that is reported by the built application
 
 ## IMPORTANT INFORMATION
 
