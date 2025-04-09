@@ -62,14 +62,14 @@ This document outlines the plan to rewrite the existing TypeScript-based MCP Pac
 
 **5. Tool Handler Implementation & Wiring:** (Likely modifying the main server file and potentially adding handler files)
 
-* [ ] Implement handlers for `describe_go_package` (using core utilities).
+* [x] Implement handlers for `describe_go_package` (using core utilities).
 * [ ] Implement handlers for `describe_python_package` (using core utilities).
 * [ ] Implement handlers for `describe_rust_package` (using core utilities, HTML parsing).
 * [ ] Implement handlers for `describe_swift_package` (using core utilities).
-* [ ] Implement handlers for `describe_npm_package` (integrating core utilities, parsing, and enhanced NPM logic).
-* [ ] Implement handlers for `get_npm_package_doc` (integrating core utilities, parsing, and enhanced NPM logic).
-* [ ] Implement handlers for `search_package_docs` (integrating all fetching, parsing, search).
-* [ ] Register all handlers with the server using `server.AddTool(tool, handlerFunc)` where:
+* [x] Implement handlers for `describe_npm_package` (integrating core utilities, parsing, and enhanced NPM logic).
+* [x] Implement handlers for `get_npm_package_doc` (integrating core utilities, parsing, and enhanced NPM logic).
+* [x] Implement handlers for `search_package_docs` (integrating all fetching, parsing, search).
+* [x] Register all handlers with the server using `server.AddTool(tool, handlerFunc)` where:
   * `tool` is the tool definition created with `mcp.NewTool`
   * `handlerFunc` is a function with signature `func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)`
   * Handler functions should extract parameters from `request.Params.Arguments`
@@ -77,8 +77,8 @@ This document outlines the plan to rewrite the existing TypeScript-based MCP Pac
 
 **6. Github Actions and Makefile Setup:**
 
-- [ ] Set up a basic `Makefile` for lint, build, test and version commands.
-- [ ] Ensure that the release process includes updating the version both in the tags (if on the main branch aka doing a release) and the version that is reported by the built application.
+- [x] Set up a basic `Makefile` for lint, build, test and version commands.
+- [x] Ensure that the release process includes updating the version both in the tags (if on the main branch aka doing a release) and the version that is reported by the built application.
 
 After completing a phase you should check off the completed items, if new work is discovered that must be completed in the next phase that's not already documented add it to the list and mark it as a new item. Then stop and wait for the user to review the work and plan.
 
@@ -111,10 +111,14 @@ After completing a phase you should check off the completed items, if new work i
 - [x] Fixed module path issues by updating the go.mod file to use the correct module path
 
 ### Next Steps
-1. Complete the implementation of tool handlers for each tool
-2. Implement handlers for other language-specific logic (Go, Python, Rust, Swift)
-3. Set up a basic `Makefile` for lint, build, test and version commands
-4. Ensure that the release process includes updating the version both in the tags and the version that is reported by the built application
+1. Complete the implementation of remaining tool handlers:
+   - `describe_python_package`
+   - `describe_rust_package`
+   - `describe_swift_package`
+2. Create handler files for each language (similar to go_handler.go)
+3. Implement unit tests for the handlers and utilities
+4. Set up GitHub Actions workflow for CI/CD
+5. Consider implementing caching for documentation results to improve performance
 
 ## IMPORTANT INFORMATION
 
