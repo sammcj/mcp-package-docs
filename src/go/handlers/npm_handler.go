@@ -1,4 +1,4 @@
-package languages
+package handlers
 
 import (
 	"context"
@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"../parsing"
-	"../utils"
+	"github.com/sammcj/mcp-package-docs/src/go/parsing"
+	"github.com/sammcj/mcp-package-docs/src/go/utils"
 )
 
 // NPMPackageInfo represents information about an NPM package
