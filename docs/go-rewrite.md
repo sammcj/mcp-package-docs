@@ -131,7 +131,7 @@ After completing a phase you should check off the completed items, if new work i
   - Set up release artifact generation for multiple platforms
 
 ### Next Steps
-1. Implement unit tests for the remaining components:
+1. Implement or fix the unit tests for the remaining components:
    - HTML parser tests
    - Markdown parser tests
    - Language-specific handler tests
