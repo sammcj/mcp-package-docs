@@ -255,7 +255,8 @@ func setupToolHandlers(srv *server.MCPServer, logger *log.Logger, cache *Cache) 
 			rustHandler := handlers.NewRustHandler(cmdRunner, httpClient, fsUtils)
 			result, err = rustHandler.SearchPackage(ctx, packageName, query, fuzzySearch)
 		case "swift":
-			return mcp.NewToolResultText(fmt.Sprintf("Search for %s packages is not yet implemented", language)), nil
+			swiftHandler := handlers.NewSwiftHandler(cmdRunner, httpClient, fsUtils)
+			result, err = swiftHandler.SearchPackage(ctx, packageName, query, fuzzySearch)
 		default:
 			return nil, fmt.Errorf("unsupported language: %s", language)
 		}
@@ -371,8 +372,31 @@ func setupToolHandlers(srv *server.MCPServer, logger *log.Logger, cache *Cache) 
 	})
 
 	srv.AddTool(describeSwiftPackageTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// TODO: Implement describe_swift_package handler
-		return mcp.NewToolResultText("Swift package documentation functionality not yet implemented"), nil
+		// Extract parameters
+		packageURL, ok := request.Params.Arguments["package"].(string)
+		if !ok || packageURL == "" {
+			return nil, fmt.Errorf("package parameter is required")
+		}
+
+		// Extract optional parameters
+		var symbol, projectPath string
+		if symbolVal, ok := request.Params.Arguments["symbol"].(string); ok {
+			symbol = symbolVal
+		}
+		if projectPathVal, ok := request.Params.Arguments["projectPath"].(string); ok {
+			projectPath = projectPathVal
+		}
+
+		// Initialize Swift handler
+		swiftHandler := handlers.NewSwiftHandler(cmdRunner, httpClient, fsUtils)
+
+		// Get package documentation
+		result, err := swiftHandler.DescribePackage(ctx, packageURL, symbol, projectPath)
+		if err != nil {
+			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(result), nil
 	})
 
 	srv.AddTool(getNpmPackageDocTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

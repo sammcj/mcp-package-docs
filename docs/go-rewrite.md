@@ -65,7 +65,7 @@ This document outlines the plan to rewrite the existing TypeScript-based MCP Pac
 * [x] Implement handlers for `describe_go_package` (using core utilities).
 * [x] Implement handlers for `describe_python_package` (using core utilities).
 * [x] Implement handlers for `describe_rust_package` (using core utilities, HTML parsing).
-* [ ] Implement handlers for `describe_swift_package` (using core utilities).
+* [x] Implement handlers for `describe_swift_package` (using core utilities).
 * [x] Implement handlers for `describe_npm_package` (integrating core utilities, parsing, and enhanced NPM logic).
 * [x] Implement handlers for `get_npm_package_doc` (integrating core utilities, parsing, and enhanced NPM logic).
 * [x] Implement handlers for `search_package_docs` (integrating all fetching, parsing, search).
@@ -106,19 +106,22 @@ After completing a phase you should check off the completed items, if new work i
   - HTML processing (`parsing/html_parser.go`)
   - Markdown processing (`parsing/markdown_parser.go`)
   - Fuzzy search functionality (`parsing/search.go`)
-- [x] Started implementing language-specific logic:
+- [x] Implemented language-specific handlers:
   - NPM package handler (`handlers/npm_handler.go`)
+  - Go package handler (`handlers/go_handler.go`)
+  - Python package handler (`handlers/python_handler.go`)
+  - Rust package handler (`handlers/rust_handler.go`)
+  - Swift package handler (`handlers/swift_handler.go`)
+- [x] Implemented search functionality for all supported languages
 - [x] Fixed module path issues by updating the go.mod file to use the correct module path
 
 ### Next Steps
-1. Complete the implementation of remaining tool handlers:
-   - `describe_python_package`
-   - `describe_rust_package`
-   - `describe_swift_package`
-2. Create handler files for each language (similar to go_handler.go)
-3. Implement unit tests for the handlers and utilities
-4. Set up GitHub Actions workflow for CI/CD
-5. Consider implementing caching for documentation results to improve performance
+1. Implement unit tests for the handlers and utilities
+2. Set up GitHub Actions workflow for CI/CD
+3. Consider implementing caching for documentation results to improve performance
+4. Add more comprehensive error handling and logging
+5. Improve documentation extraction and formatting for better readability
+6. Consider adding support for additional package registries and sources
 
 ## IMPORTANT INFORMATION
 
