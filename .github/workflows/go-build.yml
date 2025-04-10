@@ -1,0 +1,87 @@
+name: Go Build and Test
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/go/**'
+      - '.github/workflows/go-build.yml'
+      - 'Makefile'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/go/**'
+      - '.github/workflows/go-build.yml'
+      - 'Makefile'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          cd src/go
+          go mod download
+
+      - name: Lint
+        run: make lint
+
+      - name: Build
+        run: make build
+
+      - name: Test
+        run: make test
+
+      - name: Test Coverage
+        run: make test-coverage
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.html
+          if-no-files-found: ignore
+
+  release:
+    name: Release
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, 'chore(release)')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Build release artifacts
+        run: make release
+
+      - name: Get version
+        id: get_version
+        run: echo "version=$(git describe --tags --always --dirty 2>/dev/null || echo 'dev')" >> $GITHUB_OUTPUT
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-package-docs-${{ steps.get_version.outputs.version }}
+          path: |
+            mcp-package-docs-linux-amd64
+            mcp-package-docs-darwin-amd64
+            mcp-package-docs-darwin-arm64
+            mcp-package-docs-windows-amd64.exe
+          if-no-files-found: error

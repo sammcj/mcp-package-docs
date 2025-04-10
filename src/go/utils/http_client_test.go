@@ -22,8 +22,8 @@ func TestNewHTTPClient(t *testing.T) {
 }
 
 func TestHTTPClient_Get(t *testing.T) {
-	// Create a test server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Create a test server for headers test
+	serverWithHeaders := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check request headers
 		if r.Header.Get("User-Agent") != "mcp-package-docs/go" {
 			t.Errorf("Expected User-Agent header to be 'mcp-package-docs/go', got %s", r.Header.Get("User-Agent"))
@@ -34,9 +34,22 @@ func TestHTTPClient_Get(t *testing.T) {
 
 		// Write response
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("test response"))
+		w.Write([]byte("test response with headers"))
 	}))
-	defer server.Close()
+	defer serverWithHeaders.Close()
+
+	// Create a test server for no headers test
+	serverNoHeaders := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check user agent header
+		if r.Header.Get("User-Agent") != "mcp-package-docs/go" {
+			t.Errorf("Expected User-Agent header to be 'mcp-package-docs/go', got %s", r.Header.Get("User-Agent"))
+		}
+
+		// Write response
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("test response no headers"))
+	}))
+	defer serverNoHeaders.Close()
 
 	// Create client
 	client := NewHTTPClient()
@@ -45,21 +58,21 @@ func TestHTTPClient_Get(t *testing.T) {
 	headers := map[string]string{
 		"Test-Header": "test-value",
 	}
-	data, err := client.Get(context.Background(), server.URL, headers)
+	data, err := client.Get(context.Background(), serverWithHeaders.URL, headers)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if string(data) != "test response" {
-		t.Errorf("Expected response 'test response', got '%s'", string(data))
+	if string(data) != "test response with headers" {
+		t.Errorf("Expected response 'test response with headers', got '%s'", string(data))
 	}
 
 	// Test without headers
-	data, err = client.Get(context.Background(), server.URL, nil)
+	data, err = client.Get(context.Background(), serverNoHeaders.URL, nil)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if string(data) != "test response" {
-		t.Errorf("Expected response 'test response', got '%s'", string(data))
+	if string(data) != "test response no headers" {
+		t.Errorf("Expected response 'test response no headers', got '%s'", string(data))
 	}
 }
 
