@@ -1,0 +1,5 @@
+# IMPORTANT RULES
+
+- When you've added a new feature or fixed a bug, make sure you add a unit test for it.
+- When you've added new unit tests, or have completed a new feature make sure you run the unit tests.
+- After building the application with `make` the tools it provides will automatically be installed for you to try using.

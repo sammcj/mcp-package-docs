@@ -1,0 +1,10 @@
+./mcp-package-docs
+./bin
+./build
+./dist
+./out
+**/*.log
+**/*.bak
+**/*.tmp
+**/*.DS_Store
+
