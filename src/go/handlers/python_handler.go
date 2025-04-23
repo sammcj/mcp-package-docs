@@ -15,6 +15,7 @@ import (
 // It supports multiple documentation sources:
 //   - Local pip and pydoc commands for installed packages
 //   - PyPI API for package metadata and documentation
+//
 // The handler implements fallback mechanisms between these sources.
 type PythonHandler struct {
 	cmdRunner  *utils.CommandRunner
@@ -28,6 +29,7 @@ type PythonHandler struct {
 //   - cmdRunner: for executing pip and pydoc commands
 //   - httpClient: for fetching documentation from PyPI
 //   - fsUtils: for filesystem operations
+//
 // Returns an initialized PythonHandler instance.
 func NewPythonHandler(
 	cmdRunner *utils.CommandRunner,
@@ -44,14 +46,16 @@ func NewPythonHandler(
 
 // DescribePackage provides a comprehensive description of a Python package.
 // It attempts to retrieve documentation in the following order:
-//   1. Local pip show and pydoc commands for installed packages
-//   2. PyPI API for package metadata and documentation
+//  1. Local pip show and pydoc commands for installed packages
+//  2. PyPI API for package metadata and documentation
+//
 // For symbol-specific documentation, it will attempt to get targeted information.
 // Parameters:
 //   - ctx: context for the operation
 //   - packageName: name of the Python package to describe
 //   - symbol: optional specific symbol (function, class, etc.) to describe
 //   - projectPath: optional path to project directory
+//
 // Returns formatted documentation or an error if all retrieval methods fail.
 func (h *PythonHandler) DescribePackage(ctx context.Context, packageName, symbol, projectPath string) (string, error) {
 	// First try to get documentation using pip show and pydoc
@@ -87,6 +91,7 @@ func (h *PythonHandler) DescribePackage(ctx context.Context, packageName, symbol
 // Parameters:
 //   - ctx: context for the operation
 //   - packageName: name of the Python package
+//
 // Returns package metadata or an error if the pip command fails.
 func (h *PythonHandler) getPipInfo(ctx context.Context, packageName string) (string, error) {
 	result := h.cmdRunner.Run(ctx, "pip", "show", packageName)
@@ -103,6 +108,7 @@ func (h *PythonHandler) getPipInfo(ctx context.Context, packageName string) (str
 //   - ctx: context for the operation
 //   - packageName: name of the Python package
 //   - symbol: optional specific symbol to document
+//
 // Returns formatted documentation or an error if the pydoc command fails.
 func (h *PythonHandler) getPythonDocumentation(ctx context.Context, packageName, symbol string) (string, error) {
 	var args []string
@@ -126,9 +132,11 @@ func (h *PythonHandler) getPythonDocumentation(ctx context.Context, packageName,
 //   - Detailed description (in Markdown if available)
 //   - Author information and license
 //   - Project links and homepage
+//
 // Parameters:
 //   - ctx: context for the operation
 //   - packageName: name of the Python package
+//
 // Returns formatted package information or an error if retrieval fails.
 func (h *PythonHandler) fetchPyPI(ctx context.Context, packageName string) (string, error) {
 	url := fmt.Sprintf("https://pypi.org/pypi/%s/json", packageName)
@@ -211,15 +219,18 @@ func (h *PythonHandler) fetchPyPI(ctx context.Context, packageName string) (stri
 //   - Package metadata from pip show
 //   - Documentation from pydoc
 //   - Symbol-specific documentation when applicable
+//
 // The output is structured into sections including:
 //   - Package overview and summary
 //   - Module docstring
 //   - Functions and classes documentation
+//
 // Parameters:
 //   - packageName: name of the Python package
 //   - symbol: optional symbol name if documenting a specific item
 //   - pipInfo: metadata from pip show command
 //   - docResult: documentation from pydoc
+//
 // Returns formatted markdown documentation.
 func (h *PythonHandler) formatPythonDocumentation(packageName, symbol, pipInfo, docResult string) string {
 	var result strings.Builder
@@ -317,11 +328,13 @@ func (h *PythonHandler) formatPythonDocumentation(packageName, symbol, pipInfo, 
 //   - Module docstrings
 //   - Function definitions and documentation
 //   - Class definitions and documentation
+//
 // Parameters:
 //   - ctx: context for the operation
 //   - packageName: name of the Python package to search within
 //   - query: search query string
 //   - fuzzySearch: whether to use fuzzy matching
+//
 // Returns formatted search results or an error if the search fails.
 func (h *PythonHandler) SearchPackage(ctx context.Context, packageName, query string, fuzzySearch bool) (string, error) {
 	// Get package documentation

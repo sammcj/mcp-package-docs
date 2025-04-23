@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -19,64 +19,151 @@ var Version = "dev"
 
 // Cache represents a thread-safe in-memory cache for storing tool results.
 // It provides basic key-value storage with mutex-protected access for concurrent operations.
+// It supports TTL and maximum item limits.
 type Cache struct {
-	mu    sync.RWMutex
-	items map[string]interface{}
+	mu           sync.RWMutex
+	items        map[string]*cacheItem
+	maxItems     int
+	ttl          time.Duration
+	currentItems int
 }
 
-// NewCache creates a new Cache instance with an initialized internal map.
+// cacheItem represents a single cached item with expiration time
+type cacheItem struct {
+	value      interface{}
+	expiration time.Time
+}
+
+// NewCache creates a new Cache instance with the specified configuration.
+// Parameters:
+//   - maxItems: maximum number of items allowed in the cache (0 for unlimited)
+//   - ttl: time-to-live duration for cached items (0 for no expiration)
+//
 // Returns a pointer to the newly created Cache.
-func NewCache() *Cache {
-	return &Cache{
-		items: make(map[string]interface{}),
+func NewCache(maxItems int, ttl time.Duration) *Cache {
+	c := &Cache{
+		items:    make(map[string]*cacheItem),
+		maxItems: maxItems,
+		ttl:      ttl,
 	}
+
+	// Start cleanup goroutine if TTL is set
+	if ttl > 0 {
+		go c.cleanup()
+	}
+
+	return c
 }
 
 // Get retrieves an item from the cache using the provided key.
-// Returns the cached value and a boolean indicating whether the key was found.
+// Returns the cached value and a boolean indicating whether the key was found and valid.
 // This method is thread-safe for concurrent access.
 func (c *Cache) Get(key string) (interface{}, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	item, found := c.items[key]
-	return item, found
+	if !found {
+		return nil, false
+	}
+
+	// Check if item has expired
+	if !item.expiration.IsZero() && time.Now().After(item.expiration) {
+		return nil, false
+	}
+
+	return item.value, true
 }
 
 // Set adds or updates an item in the cache with the specified key and value.
+// If the cache is at capacity, removes the oldest item before adding the new one.
 // This method is thread-safe for concurrent access.
 func (c *Cache) Set(key string, value interface{}) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.items[key] = value
-}
 
-func main() {
-	// Set up logging to stderr
-	logger := log.New(os.Stderr, "[mcp-package-docs] ", log.LstdFlags)
+	// Check if we need to make room
+	if c.maxItems > 0 && len(c.items) >= c.maxItems && c.items[key] == nil {
+		// Remove oldest item (simple implementation - could be improved)
+		var oldestKey string
+		var oldestTime time.Time
+		first := true
 
-	// Create a new cache
-	cache := NewCache()
+		for k, v := range c.items {
+			if first || v.expiration.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = v.expiration
+				first = false
+			}
+		}
 
-	// Create a new MCP server
-	srv := server.NewMCPServer(
-		"mcp-package-docs",
-		Version,
-		server.WithLogging(),
-	)
+		delete(c.items, oldestKey)
+	}
 
-	// Set up tool handlers
-	setupToolHandlers(srv, logger, cache)
+	// Calculate expiration time if TTL is set
+	var expiration time.Time
+	if c.ttl > 0 {
+		expiration = time.Now().Add(c.ttl)
+	}
 
-	// Start the server using stdio transport
-	logger.Println("Starting MCP Package Docs server")
-	if err := server.ServeStdio(srv); err != nil {
-		logger.Fatalf("Server error: %v", err)
+	// Store the item
+	c.items[key] = &cacheItem{
+		value:      value,
+		expiration: expiration,
 	}
 }
 
+// cleanup periodically removes expired items from the cache
+func (c *Cache) cleanup() {
+	ticker := time.NewTicker(c.ttl / 2)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		c.mu.Lock()
+		now := time.Now()
+		for key, item := range c.items {
+			if !item.expiration.IsZero() && now.After(item.expiration) {
+				delete(c.items, key)
+			}
+		}
+		c.mu.Unlock()
+	}
+}
+
+func main() {
+	// Create a new cache with default settings
+	cache := NewCache(1000, time.Hour) // 1000 items, 1 hour TTL
+
+	// Create a new MCP server with default options
+	srv := server.NewMCPServer(
+		"mcp-package-docs",
+		Version,
+	)
+
+	// Create a null logger for MCP-compliant logging (discards everything)
+	nullLogger := log.New(devNull{}, "", 0)
+
+	// Set up tool handlers
+	if err := setupToolHandlers(srv, nullLogger, cache); err != nil {
+		// Return silently - errors are handled through MCP protocol
+		return
+	}
+
+	// Start the server using stdio transport
+	if err := server.ServeStdio(srv); err != nil {
+		// Return silently - errors are handled through MCP protocol
+		return
+	}
+}
+
+// devNull implements io.Writer by discarding everything
+type devNull struct{}
+
+func (devNull) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
 // DocResult represents the structured result of a documentation query.
-// It contains various sections of documentation including description, usage examples,
-// and any potential errors encountered during the documentation retrieval process.
 type DocResult struct {
 	Description string `json:"description,omitempty"`
 	Usage       string `json:"usage,omitempty"`
@@ -84,486 +171,160 @@ type DocResult struct {
 	Error       string `json:"error,omitempty"`
 }
 
-// setupToolHandlers registers all tool handlers with the MCP server.
-// It initializes the required utility instances (command runner, HTTP client, etc.)
-// and sets up handlers for all supported package documentation tools.
-// Each handler is registered with appropriate parameter validation and error handling.
-func setupToolHandlers(srv *server.MCPServer, logger *log.Logger, cache *Cache) {
-	// Create utility instances
+func setupToolHandlers(srv *server.MCPServer, logger *log.Logger, cache *Cache) error {
 	cmdRunner := utils.NewCommandRunner()
 	httpClient := utils.NewHTTPClient()
 	fsUtils, err := utils.NewFileSystemUtils()
 	if err != nil {
-		logger.Fatalf("Failed to create file system utils: %v", err)
+		return fmt.Errorf("failed to create file system utils: %w", err)
 	}
 	npmrcParser := utils.NewNPMRCParser(fsUtils)
 
 	// Initialize handlers
 	npmHandler := handlers.NewNPMHandler(cmdRunner, httpClient, fsUtils, npmrcParser)
 	goHandler := handlers.NewGoHandler(cmdRunner, httpClient, fsUtils)
-	// Define search_package_docs tool
-	searchPackageDocsTool := mcp.NewTool("search_package_docs",
+	pythonHandler := handlers.NewPythonHandler(cmdRunner, httpClient, fsUtils)
+	rustHandler := handlers.NewRustHandler(cmdRunner, httpClient, fsUtils)
+	swiftHandler := handlers.NewSwiftHandler(cmdRunner, httpClient, fsUtils)
+
+	// Register tools
+	srv.AddTool(mcp.NewTool("search_package_docs",
 		mcp.WithDescription("Search within package documentation"),
-		mcp.WithString("package",
-			mcp.Required(),
-			mcp.Description("Package name to search within"),
-		),
-		mcp.WithString("query",
-			mcp.Required(),
-			mcp.Description("Search query"),
-		),
-		mcp.WithString("language",
-			mcp.Required(),
-			mcp.Description("Package language/ecosystem"),
-			mcp.Enum("go", "python", "npm", "swift", "rust"),
-		),
-		mcp.WithBoolean("fuzzy",
-			mcp.Description("Enable fuzzy matching"),
-		),
-		mcp.WithString("projectPath",
-			mcp.Description("Optional path to project directory for local .npmrc files"),
-		),
-	)
+		mcp.WithString("package", mcp.Required(), mcp.Description("Package name to search within")),
+		mcp.WithString("query", mcp.Required(), mcp.Description("Search query")),
+		mcp.WithString("language", mcp.Required(), mcp.Description("Package language/ecosystem"), mcp.Enum("go", "python", "npm", "swift", "rust")),
+		mcp.WithBoolean("fuzzy", mcp.Description("Enable fuzzy matching")),
+		mcp.WithString("projectPath", mcp.Description("Optional path to project directory")),
+	), handleSearch(cache, npmHandler, goHandler, pythonHandler, rustHandler, swiftHandler))
 
-	// Define describe_go_package tool
-	describeGoPackageTool := mcp.NewTool("describe_go_package",
-		mcp.WithDescription("Get a brief description of a Go package"),
-		mcp.WithString("package",
-			mcp.Required(),
-			mcp.Description("Full package import path (e.g. encoding/json)"),
-		),
-		mcp.WithString("symbol",
-			mcp.Description("Optional symbol name to look up specific documentation"),
-		),
-		mcp.WithString("projectPath",
-			mcp.Description("Optional path to project directory for local .npmrc files"),
-		),
-	)
+	srv.AddTool(mcp.NewTool("describe_package",
+		mcp.WithDescription("Get a brief description of a package"),
+		mcp.WithString("package", mcp.Required(), mcp.Description("Package name or URL")),
+		mcp.WithString("language", mcp.Required(), mcp.Description("Package language/ecosystem"), mcp.Enum("go", "python", "npm", "swift", "rust")),
+		mcp.WithString("version", mcp.Description("Optional package version")),
+		mcp.WithString("symbol", mcp.Description("Optional symbol name to look up specific documentation")),
+		mcp.WithString("projectPath", mcp.Description("Optional path to project directory")),
+	), handleDescribe(cache, npmHandler, goHandler, pythonHandler, rustHandler, swiftHandler))
 
-	// Define describe_python_package tool
-	describePythonPackageTool := mcp.NewTool("describe_python_package",
-		mcp.WithDescription("Get a brief description of a Python package"),
-		mcp.WithString("package",
-			mcp.Required(),
-			mcp.Description("Package name (e.g. requests)"),
-		),
-		mcp.WithString("symbol",
-			mcp.Description("Optional symbol name to look up specific documentation"),
-		),
-		mcp.WithString("projectPath",
-			mcp.Description("Optional path to project directory for local .npmrc files"),
-		),
-	)
+	srv.AddTool(mcp.NewTool("get_package_doc",
+		mcp.WithDescription("Get full documentation for a package"),
+		mcp.WithString("package", mcp.Required(), mcp.Description("Package name or URL")),
+		mcp.WithString("language", mcp.Required(), mcp.Description("Package language/ecosystem"), mcp.Enum("go", "python", "npm", "swift", "rust")),
+		mcp.WithString("section", mcp.Description("Optional section to retrieve")),
+		mcp.WithNumber("maxLength", mcp.Description("Optional maximum length")),
+		mcp.WithString("query", mcp.Description("Optional search query")),
+	), handleDoc(cache, npmHandler))
 
-	// Define describe_rust_package tool
-	describeRustPackageTool := mcp.NewTool("describe_rust_package",
-		mcp.WithDescription("Get a brief description of a Rust package"),
-		mcp.WithString("package",
-			mcp.Required(),
-			mcp.Description("Crate name (e.g. serde)"),
-		),
-		mcp.WithString("version",
-			mcp.Description("Optional crate version"),
-		),
-	)
+	return nil
+}
 
-	// Define describe_npm_package tool
-	describeNpmPackageTool := mcp.NewTool("describe_npm_package",
-		mcp.WithDescription("Get a brief description of an NPM package"),
-		mcp.WithString("package",
-			mcp.Required(),
-			mcp.Description("Package name (e.g. axios)"),
-		),
-		mcp.WithString("version",
-			mcp.Description("Optional package version"),
-		),
-		mcp.WithString("projectPath",
-			mcp.Description("Optional path to project directory for local .npmrc files"),
-		),
-	)
+// Handler functions
+func handleSearch(cache *Cache, npm *handlers.NPMHandler, go_ *handlers.GoHandler, python *handlers.PythonHandler, rust *handlers.RustHandler, swift *handlers.SwiftHandler) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		packageName, _ := request.Params.Arguments["package"].(string)
+		query, _ := request.Params.Arguments["query"].(string)
+		language, _ := request.Params.Arguments["language"].(string)
+		fuzzySearch, _ := request.Params.Arguments["fuzzy"].(bool)
+		projectPath, _ := request.Params.Arguments["projectPath"].(string)
 
-	// Define describe_swift_package tool
-	describeSwiftPackageTool := mcp.NewTool("describe_swift_package",
-		mcp.WithDescription("Get a brief description of a Swift package"),
-		mcp.WithString("package",
-			mcp.Required(),
-			mcp.Description("Package URL (e.g. https://github.com/apple/swift-argument-parser)"),
-		),
-		mcp.WithString("symbol",
-			mcp.Description("Optional symbol name to look up specific documentation"),
-		),
-		mcp.WithString("projectPath",
-			mcp.Description("Optional path to project directory for Package.swift file"),
-		),
-	)
-
-	// Define get_npm_package_doc tool
-	getNpmPackageDocTool := mcp.NewTool("get_npm_package_doc",
-		mcp.WithDescription("Get full documentation for an NPM package"),
-		mcp.WithString("package",
-			mcp.Required(),
-			mcp.Description("Package name (e.g. axios)"),
-		),
-		mcp.WithString("version",
-			mcp.Description("Optional package version"),
-		),
-		mcp.WithString("projectPath",
-			mcp.Description("Optional path to project directory for local .npmrc files"),
-		),
-		mcp.WithString("section",
-			mcp.Description("Optional section to retrieve (e.g. 'installation', 'api', 'examples')"),
-		),
-		mcp.WithNumber("maxLength",
-			mcp.Description("Optional maximum length of the returned documentation"),
-		),
-		mcp.WithString("query",
-			mcp.Description("Optional search query to filter documentation content"),
-		),
-	)
-
-	// Register tool handlers
-	srv.AddTool(searchPackageDocsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Extract parameters
-		packageName, ok := request.Params.Arguments["package"].(string)
-		if !ok || packageName == "" {
-			return nil, fmt.Errorf("package parameter is required")
+		// Check cache first
+		cacheKey := fmt.Sprintf("search:%s:%s:%s:%v:%s", language, packageName, query, fuzzySearch, projectPath)
+		if cachedResult, found := cache.Get(cacheKey); found {
+			return mcp.NewToolResultText(cachedResult.(string)), nil
 		}
 
-		query, ok := request.Params.Arguments["query"].(string)
-		if !ok || query == "" {
-			return nil, fmt.Errorf("query parameter is required")
-		}
-
-		language, ok := request.Params.Arguments["language"].(string)
-		if !ok || language == "" {
-			return nil, fmt.Errorf("language parameter is required")
-		}
-
-		// Extract optional parameters
-		var projectPath string
-		fuzzySearch := true // Default to true
-
-		if projectPathVal, ok := request.Params.Arguments["projectPath"].(string); ok {
-			projectPath = projectPathVal
-		}
-		if fuzzyVal, ok := request.Params.Arguments["fuzzy"].(bool); ok {
-			fuzzySearch = fuzzyVal
-		}
-
-		// Perform search based on language
 		var result string
 		var err error
 
 		switch language {
 		case "go":
-			result, err = goHandler.SearchPackage(ctx, packageName, query, fuzzySearch)
-		case "npm":
-			result, err = npmHandler.SearchPackage(ctx, packageName, query, fuzzySearch, projectPath)
+			result, err = go_.SearchPackage(ctx, packageName, query, fuzzySearch)
 		case "python":
-			pythonHandler := handlers.NewPythonHandler(cmdRunner, httpClient, fsUtils)
-			result, err = pythonHandler.SearchPackage(ctx, packageName, query, fuzzySearch)
+			result, err = python.SearchPackage(ctx, packageName, query, fuzzySearch)
+		case "npm":
+			result, err = npm.SearchPackage(ctx, packageName, query, fuzzySearch, projectPath)
 		case "rust":
-			rustHandler := handlers.NewRustHandler(cmdRunner, httpClient, fsUtils)
-			result, err = rustHandler.SearchPackage(ctx, packageName, query, fuzzySearch)
+			result, err = rust.SearchPackage(ctx, packageName, query, fuzzySearch)
 		case "swift":
-			swiftHandler := handlers.NewSwiftHandler(cmdRunner, httpClient, fsUtils)
-			result, err = swiftHandler.SearchPackage(ctx, packageName, query, fuzzySearch)
+			result, err = swift.SearchPackage(ctx, packageName, query, fuzzySearch)
 		default:
 			return nil, fmt.Errorf("unsupported language: %s", language)
 		}
 
 		if err != nil {
-			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
+			return nil, fmt.Errorf("search failed: %w", err)
 		}
 
+		cache.Set(cacheKey, result)
 		return mcp.NewToolResultText(result), nil
-	})
+	}
+}
 
-	srv.AddTool(describeGoPackageTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Extract parameters
-		packageName, ok := request.Params.Arguments["package"].(string)
-		if !ok || packageName == "" {
-			return nil, fmt.Errorf("package parameter is required")
+func handleDescribe(cache *Cache, npm *handlers.NPMHandler, go_ *handlers.GoHandler, python *handlers.PythonHandler, rust *handlers.RustHandler, swift *handlers.SwiftHandler) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		packageName, _ := request.Params.Arguments["package"].(string)
+		language, _ := request.Params.Arguments["language"].(string)
+		version, _ := request.Params.Arguments["version"].(string)
+		symbol, _ := request.Params.Arguments["symbol"].(string)
+		projectPath, _ := request.Params.Arguments["projectPath"].(string)
+
+		cacheKey := fmt.Sprintf("describe:%s:%s:%s:%s:%s", language, packageName, version, symbol, projectPath)
+		if cachedResult, found := cache.Get(cacheKey); found {
+			return mcp.NewToolResultText(cachedResult.(string)), nil
 		}
 
-		// Extract optional parameters
-		var symbol, projectPath string
-		if symbolVal, ok := request.Params.Arguments["symbol"].(string); ok {
-			symbol = symbolVal
-		}
-		if projectPathVal, ok := request.Params.Arguments["projectPath"].(string); ok {
-			projectPath = projectPathVal
+		var result string
+		var err error
+
+		switch language {
+		case "go":
+			result, err = go_.DescribePackage(ctx, packageName, symbol, projectPath)
+		case "python":
+			result, err = python.DescribePackage(ctx, packageName, symbol, projectPath)
+		case "npm":
+			result, err = npm.DescribePackage(ctx, packageName, version, projectPath)
+		case "rust":
+			result, err = rust.DescribePackage(ctx, packageName, version)
+		case "swift":
+			result, err = swift.DescribePackage(ctx, packageName, symbol, projectPath)
+		default:
+			return nil, fmt.Errorf("unsupported language: %s", language)
 		}
 
-		// Get package documentation
-		result, err := goHandler.DescribePackage(ctx, packageName, symbol, projectPath)
 		if err != nil {
-			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
+			return nil, fmt.Errorf("describe failed: %w", err)
 		}
 
+		cache.Set(cacheKey, result)
 		return mcp.NewToolResultText(result), nil
-	})
+	}
+}
 
-	srv.AddTool(describePythonPackageTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Extract parameters
-		packageName, ok := request.Params.Arguments["package"].(string)
-		if !ok || packageName == "" {
-			return nil, fmt.Errorf("package parameter is required")
+func handleDoc(cache *Cache, npm *handlers.NPMHandler) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		packageName, _ := request.Params.Arguments["package"].(string)
+		language, _ := request.Params.Arguments["language"].(string)
+		section, _ := request.Params.Arguments["section"].(string)
+		maxLengthFloat, _ := request.Params.Arguments["maxLength"].(float64)
+		query, _ := request.Params.Arguments["query"].(string)
+
+		maxLength := int(maxLengthFloat)
+
+		if language != "npm" {
+			return nil, fmt.Errorf("full documentation retrieval is only supported for NPM packages")
 		}
 
-		// Extract optional parameters
-		var symbol, projectPath string
-		if symbolVal, ok := request.Params.Arguments["symbol"].(string); ok {
-			symbol = symbolVal
-		}
-		if projectPathVal, ok := request.Params.Arguments["projectPath"].(string); ok {
-			projectPath = projectPathVal
+		cacheKey := fmt.Sprintf("doc:%s:%s:%s:%d:%s", language, packageName, section, maxLength, query)
+		if cachedResult, found := cache.Get(cacheKey); found {
+			return mcp.NewToolResultText(cachedResult.(string)), nil
 		}
 
-		// Initialize Python handler
-		pythonHandler := handlers.NewPythonHandler(cmdRunner, httpClient, fsUtils)
-
-		// Get package documentation
-		result, err := pythonHandler.DescribePackage(ctx, packageName, symbol, projectPath)
+		result, err := npm.GetPackageDocumentation(ctx, packageName, "", "", section, maxLength, query)
 		if err != nil {
-			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
+			return nil, fmt.Errorf("documentation retrieval failed: %w", err)
 		}
 
+		cache.Set(cacheKey, result)
 		return mcp.NewToolResultText(result), nil
-	})
-
-	srv.AddTool(describeRustPackageTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Extract parameters
-		packageName, ok := request.Params.Arguments["package"].(string)
-		if !ok || packageName == "" {
-			return nil, fmt.Errorf("package parameter is required")
-		}
-
-		// Extract optional parameters
-		var version string
-		if versionVal, ok := request.Params.Arguments["version"].(string); ok {
-			version = versionVal
-		}
-
-		// Initialize Rust handler
-		rustHandler := handlers.NewRustHandler(cmdRunner, httpClient, fsUtils)
-
-		// Get package documentation
-		result, err := rustHandler.DescribePackage(ctx, packageName, version)
-		if err != nil {
-			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
-		}
-
-		return mcp.NewToolResultText(result), nil
-	})
-
-	srv.AddTool(describeNpmPackageTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Extract parameters
-		packageName, ok := request.Params.Arguments["package"].(string)
-		if !ok || packageName == "" {
-			return nil, fmt.Errorf("package parameter is required")
-		}
-
-		// Extract optional parameters
-		var version, projectPath string
-		if versionVal, ok := request.Params.Arguments["version"].(string); ok {
-			version = versionVal
-		}
-		if projectPathVal, ok := request.Params.Arguments["projectPath"].(string); ok {
-			projectPath = projectPathVal
-		}
-
-		// Get package documentation
-		result, err := npmHandler.DescribePackage(ctx, packageName, version, projectPath)
-		if err != nil {
-			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
-		}
-
-		return mcp.NewToolResultText(result), nil
-	})
-
-	srv.AddTool(describeSwiftPackageTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Extract parameters
-		packageURL, ok := request.Params.Arguments["package"].(string)
-		if !ok || packageURL == "" {
-			return nil, fmt.Errorf("package parameter is required")
-		}
-
-		// Extract optional parameters
-		var symbol, projectPath string
-		if symbolVal, ok := request.Params.Arguments["symbol"].(string); ok {
-			symbol = symbolVal
-		}
-		if projectPathVal, ok := request.Params.Arguments["projectPath"].(string); ok {
-			projectPath = projectPathVal
-		}
-
-		// Initialize Swift handler
-		swiftHandler := handlers.NewSwiftHandler(cmdRunner, httpClient, fsUtils)
-
-		// Get package documentation
-		result, err := swiftHandler.DescribePackage(ctx, packageURL, symbol, projectPath)
-		if err != nil {
-			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
-		}
-
-		return mcp.NewToolResultText(result), nil
-	})
-
-	srv.AddTool(getNpmPackageDocTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Extract parameters
-		packageName, ok := request.Params.Arguments["package"].(string)
-		if !ok || packageName == "" {
-			return nil, fmt.Errorf("package parameter is required")
-		}
-
-		// Extract optional parameters
-		var version, projectPath, section, query string
-		var maxLength int
-
-		if versionVal, ok := request.Params.Arguments["version"].(string); ok {
-			version = versionVal
-		}
-		if projectPathVal, ok := request.Params.Arguments["projectPath"].(string); ok {
-			projectPath = projectPathVal
-		}
-		if sectionVal, ok := request.Params.Arguments["section"].(string); ok {
-			section = sectionVal
-		}
-		if queryVal, ok := request.Params.Arguments["query"].(string); ok {
-			query = queryVal
-		}
-		if maxLengthVal, ok := request.Params.Arguments["maxLength"].(float64); ok {
-			maxLength = int(maxLengthVal)
-		}
-
-		// Get package documentation
-		result, err := npmHandler.GetPackageDocumentation(ctx, packageName, version, projectPath, section, maxLength, query)
-		if err != nil {
-			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
-		}
-
-		return mcp.NewToolResultText(result), nil
-	})
-
-	// Add legacy tool aliases
-	srv.AddTool(mcp.NewTool("lookup_go_doc",
-		mcp.WithDescription("[DEPRECATED] Use describe_go_package instead. Get a brief description of a Go package"),
-		mcp.WithString("package",
-			mcp.Required(),
-			mcp.Description("Full package import path (e.g. encoding/json)"),
-		),
-		mcp.WithString("symbol",
-			mcp.Description("Optional symbol name to look up specific documentation"),
-		),
-		mcp.WithString("projectPath",
-			mcp.Description("Optional path to project directory for local .npmrc files"),
-		),
-	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Extract parameters
-		packageName, ok := request.Params.Arguments["package"].(string)
-		if !ok || packageName == "" {
-			return nil, fmt.Errorf("package parameter is required")
-		}
-
-		// Extract optional parameters
-		var symbol, projectPath string
-		if symbolVal, ok := request.Params.Arguments["symbol"].(string); ok {
-			symbol = symbolVal
-		}
-		if projectPathVal, ok := request.Params.Arguments["projectPath"].(string); ok {
-			projectPath = projectPathVal
-		}
-
-		// Get package documentation
-		result, err := goHandler.DescribePackage(ctx, packageName, symbol, projectPath)
-		if err != nil {
-			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
-		}
-
-		// Add deprecation notice
-		deprecationNotice := "⚠️ This tool is deprecated. Please use describe_go_package instead.\n\n"
-		return mcp.NewToolResultText(deprecationNotice + result), nil
-	})
-
-	srv.AddTool(mcp.NewTool("lookup_python_doc",
-		mcp.WithDescription("[DEPRECATED] Use describe_python_package instead. Get a brief description of a Python package"),
-		mcp.WithString("package",
-			mcp.Required(),
-			mcp.Description("Package name (e.g. requests)"),
-		),
-		mcp.WithString("symbol",
-			mcp.Description("Optional symbol name to look up specific documentation"),
-		),
-		mcp.WithString("projectPath",
-			mcp.Description("Optional path to project directory for local .npmrc files"),
-		),
-	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Extract parameters
-		packageName, ok := request.Params.Arguments["package"].(string)
-		if !ok || packageName == "" {
-			return nil, fmt.Errorf("package parameter is required")
-		}
-
-		// Extract optional parameters
-		var symbol, projectPath string
-		if symbolVal, ok := request.Params.Arguments["symbol"].(string); ok {
-			symbol = symbolVal
-		}
-		if projectPathVal, ok := request.Params.Arguments["projectPath"].(string); ok {
-			projectPath = projectPathVal
-		}
-
-		// Initialize Python handler
-		pythonHandler := handlers.NewPythonHandler(cmdRunner, httpClient, fsUtils)
-
-		// Get package documentation
-		result, err := pythonHandler.DescribePackage(ctx, packageName, symbol, projectPath)
-		if err != nil {
-			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
-		}
-
-		// Add deprecation notice
-		deprecationNotice := "⚠️ This tool is deprecated. Please use describe_python_package instead.\n\n"
-		return mcp.NewToolResultText(deprecationNotice + result), nil
-	})
-
-	srv.AddTool(mcp.NewTool("lookup_npm_doc",
-		mcp.WithDescription("[DEPRECATED] Use describe_npm_package instead. Get a brief description of an NPM package"),
-		mcp.WithString("package",
-			mcp.Required(),
-			mcp.Description("Package name (e.g. axios)"),
-		),
-		mcp.WithString("version",
-			mcp.Description("Optional package version"),
-		),
-		mcp.WithString("projectPath",
-			mcp.Description("Optional path to project directory for local .npmrc files"),
-		),
-	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Extract parameters
-		packageName, ok := request.Params.Arguments["package"].(string)
-		if !ok || packageName == "" {
-			return nil, fmt.Errorf("package parameter is required")
-		}
-
-		// Extract optional parameters
-		var version, projectPath string
-		if versionVal, ok := request.Params.Arguments["version"].(string); ok {
-			version = versionVal
-		}
-		if projectPathVal, ok := request.Params.Arguments["projectPath"].(string); ok {
-			projectPath = projectPathVal
-		}
-
-		// Get package documentation
-		result, err := npmHandler.DescribePackage(ctx, packageName, version, projectPath)
-		if err != nil {
-			return mcp.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
-		}
-
-		// Add deprecation notice
-		deprecationNotice := "⚠️ This tool is deprecated. Please use describe_npm_package instead.\n\n"
-		return mcp.NewToolResultText(deprecationNotice + result), nil
-	})
+	}
 }

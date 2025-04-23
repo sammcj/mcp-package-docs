@@ -16,6 +16,7 @@ import (
 //   - Local cargo and rustdoc commands
 //   - crates.io API for package metadata
 //   - docs.rs for detailed documentation and README content
+//
 // The handler implements fallback mechanisms between these sources.
 type RustHandler struct {
 	cmdRunner  *utils.CommandRunner
@@ -29,6 +30,7 @@ type RustHandler struct {
 //   - cmdRunner: for executing cargo and rustdoc commands
 //   - httpClient: for fetching documentation from crates.io and docs.rs
 //   - fsUtils: for filesystem operations
+//
 // Returns an initialized RustHandler instance.
 func NewRustHandler(
 	cmdRunner *utils.CommandRunner,
@@ -45,13 +47,15 @@ func NewRustHandler(
 
 // DescribePackage provides a comprehensive description of a Rust package.
 // It attempts to retrieve documentation in the following order:
-//   1. Local cargo/rustdoc documentation
-//   2. crates.io API for metadata
-//   3. docs.rs for detailed documentation
+//  1. Local cargo/rustdoc documentation
+//  2. crates.io API for metadata
+//  3. docs.rs for detailed documentation
+//
 // Parameters:
 //   - ctx: context for the operation
 //   - packageName: name of the Rust package to describe
 //   - version: optional specific version to retrieve
+//
 // Returns formatted documentation or an error if all retrieval methods fail.
 func (h *RustHandler) DescribePackage(ctx context.Context, packageName, version string) (string, error) {
 	// First try to get documentation using cargo
@@ -84,6 +88,7 @@ func (h *RustHandler) DescribePackage(ctx context.Context, packageName, version 
 // Parameters:
 //   - ctx: context for the operation
 //   - packageName: name of the Rust package
+//
 // Returns package metadata or an error if the cargo command fails.
 func (h *RustHandler) getCargoInfo(ctx context.Context, packageName string) (string, error) {
 	result := h.cmdRunner.Run(ctx, "cargo", "search", packageName, "--limit", "1")
@@ -96,12 +101,14 @@ func (h *RustHandler) getCargoInfo(ctx context.Context, packageName string) (str
 
 // getRustDocumentation uses rustdoc to get package documentation from local installation.
 // This method:
-//   1. Gets documentation path from rustup
-//   2. Checks if package documentation exists
-//   3. Reads and converts HTML documentation to markdown
+//  1. Gets documentation path from rustup
+//  2. Checks if package documentation exists
+//  3. Reads and converts HTML documentation to markdown
+//
 // Parameters:
 //   - ctx: context for the operation
 //   - packageName: name of the Rust package
+//
 // Returns formatted documentation or an error if retrieval fails.
 func (h *RustHandler) getRustDocumentation(ctx context.Context, packageName string) (string, error) {
 	// Try to get documentation from locally installed packages
@@ -143,10 +150,12 @@ func (h *RustHandler) getRustDocumentation(ctx context.Context, packageName stri
 //   - Package description and metadata
 //   - Repository and documentation links
 //   - README content (via docs.rs integration)
+//
 // Parameters:
 //   - ctx: context for the operation
 //   - packageName: name of the Rust package
 //   - version: optional specific version
+//
 // Returns formatted package information or an error if retrieval fails.
 func (h *RustHandler) fetchCratesIO(ctx context.Context, packageName, version string) (string, error) {
 	// Construct the URL for the crates.io API
@@ -275,6 +284,7 @@ func (h *RustHandler) fetchCratesIO(ctx context.Context, packageName, version st
 //   - ctx: context for the operation
 //   - packageName: name of the Rust package
 //   - version: optional specific version
+//
 // Returns formatted documentation or an error if retrieval fails.
 func (h *RustHandler) fetchDocsRs(ctx context.Context, packageName, version string) (string, error) {
 	// Construct the URL for docs.rs
@@ -330,6 +340,7 @@ func (h *RustHandler) fetchDocsRs(ctx context.Context, packageName, version stri
 //   - ctx: context for the operation
 //   - packageName: name of the Rust package
 //   - version: optional specific version
+//
 // Returns README content or an error if retrieval fails.
 func (h *RustHandler) fetchDocsRsReadme(ctx context.Context, packageName, version string) (string, error) {
 	// Construct the URL for docs.rs README
@@ -349,10 +360,12 @@ func (h *RustHandler) fetchDocsRsReadme(ctx context.Context, packageName, versio
 
 // extractPackageOverview extracts the package overview from docs.rs markdown content.
 // It attempts to find the overview section using multiple patterns:
-//   1. Dedicated "Overview" section
-//   2. First non-heading paragraph after the title
+//  1. Dedicated "Overview" section
+//  2. First non-heading paragraph after the title
+//
 // Parameters:
 //   - markdown: the markdown content to extract overview from
+//
 // Returns the extracted overview text or empty string if no overview is found.
 func (h *RustHandler) extractPackageOverview(markdown string) string {
 	// Look for the package overview section
@@ -377,11 +390,13 @@ func (h *RustHandler) extractPackageOverview(markdown string) string {
 //   - Package metadata from cargo
 //   - Documentation content from rustdoc
 //   - Relevant sections extracted from the documentation
+//
 // Parameters:
 //   - packageName: name of the Rust package
 //   - version: optional specific version
 //   - cargoInfo: metadata from cargo command
 //   - docResult: documentation from rustdoc
+//
 // Returns formatted markdown documentation.
 func (h *RustHandler) formatRustDocumentation(packageName, version, cargoInfo, docResult string) string {
 	var result strings.Builder
@@ -448,11 +463,13 @@ func (h *RustHandler) formatRustDocumentation(packageName, version, cargoInfo, d
 //   - Overview and general documentation
 //   - API documentation sections
 //   - Code examples
+//
 // Parameters:
 //   - ctx: context for the operation
 //   - packageName: name of the Rust package to search within
 //   - query: search query string
 //   - fuzzySearch: whether to use fuzzy matching
+//
 // Returns formatted search results or an error if the search fails.
 func (h *RustHandler) SearchPackage(ctx context.Context, packageName, query string, fuzzySearch bool) (string, error) {
 	// Try to get documentation from docs.rs
