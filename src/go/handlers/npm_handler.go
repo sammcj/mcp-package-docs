@@ -11,7 +11,8 @@ import (
 	"github.com/sammcj/mcp-package-docs/src/go/utils"
 )
 
-// NPMPackageInfo represents information about an NPM package
+// NPMPackageInfo represents comprehensive information about an NPM package retrieved from a registry.
+// It includes metadata such as package details, dependencies, and type definitions.
 type NPMPackageInfo struct {
 	Name            string   `json:"name"`
 	Version         string   `json:"version"`
@@ -29,7 +30,9 @@ type NPMPackageInfo struct {
 	DevDependencies map[string]string `json:"devDependencies"`
 }
 
-// NPMHandler provides functionality for handling NPM packages
+// NPMHandler provides functionality for handling NPM package documentation and metadata.
+// It encapsulates the logic for interacting with NPM registries, parsing package documentation,
+// and handling private registry authentication through .npmrc configuration.
 type NPMHandler struct {
 	cmdRunner   *utils.CommandRunner
 	httpClient  *utils.HTTPClient
@@ -39,7 +42,13 @@ type NPMHandler struct {
 	mdParser    *parsing.MarkdownParser
 }
 
-// NewNPMHandler creates a new NPM handler
+// NewNPMHandler creates a new NPM handler with the necessary dependencies for package operations.
+// It requires:
+//   - cmdRunner: for executing NPM CLI commands
+//   - httpClient: for making HTTP requests to NPM registries
+//   - fsUtils: for file system operations
+//   - npmrcParser: for parsing .npmrc configuration files
+// Returns an initialized NPMHandler instance.
 func NewNPMHandler(
 	cmdRunner *utils.CommandRunner,
 	httpClient *utils.HTTPClient,
@@ -56,7 +65,13 @@ func NewNPMHandler(
 	}
 }
 
-// GetPackageInfo retrieves information about an NPM package
+// GetPackageInfo retrieves comprehensive information about an NPM package from its registry.
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the package to retrieve information for
+//   - version: specific version to retrieve (empty string for latest)
+//   - projectPath: optional path to project for .npmrc configuration
+// Returns package information or an error if retrieval fails.
 func (h *NPMHandler) GetPackageInfo(ctx context.Context, packageName, version, projectPath string) (*NPMPackageInfo, error) {
 	// Get registry configuration
 	registryConfig, err := h.npmrcParser.GetRegistryConfigForPackage(packageName, projectPath)
@@ -119,7 +134,13 @@ func (h *NPMHandler) GetPackageInfo(ctx context.Context, packageName, version, p
 	return &info, nil
 }
 
-// GetPackageReadme retrieves the README for an NPM package
+// GetPackageReadme retrieves the README content for an NPM package from its registry.
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the package to retrieve README for
+//   - version: specific version to retrieve (empty string for latest)
+//   - projectPath: optional path to project for .npmrc configuration
+// Returns the README content as a string or an error if retrieval fails.
 func (h *NPMHandler) GetPackageReadme(ctx context.Context, packageName, version, projectPath string) (string, error) {
 	// Get registry configuration
 	registryConfig, err := h.npmrcParser.GetRegistryConfigForPackage(packageName, projectPath)
@@ -157,7 +178,17 @@ func (h *NPMHandler) GetPackageReadme(ctx context.Context, packageName, version,
 	return packageInfo.Readme, nil
 }
 
-// GetPackageDocumentation retrieves documentation for an NPM package
+// GetPackageDocumentation retrieves and processes documentation for an NPM package.
+// It can filter by section, limit content length, and search within the documentation.
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the package
+//   - version: specific version (empty string for latest)
+//   - projectPath: optional path to project for .npmrc configuration
+//   - section: optional specific section to retrieve
+//   - maxLength: maximum length of returned content (0 for no limit)
+//   - query: optional search query to filter content
+// Returns formatted documentation content or an error if retrieval fails.
 func (h *NPMHandler) GetPackageDocumentation(ctx context.Context, packageName, version, projectPath, section string, maxLength int, query string) (string, error) {
 	// Get the README
 	readme, err := h.GetPackageReadme(ctx, packageName, version, projectPath)
@@ -224,7 +255,17 @@ func (h *NPMHandler) GetPackageDocumentation(ctx context.Context, packageName, v
 	return content, nil
 }
 
-// GetPackageExamples retrieves examples for an NPM package
+// GetPackageExamples retrieves code examples from an NPM package's documentation.
+// It attempts to find examples in several locations:
+//   1. Dedicated examples section in README
+//   2. Code blocks throughout the documentation
+//   3. Examples directory in the package repository
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the package
+//   - version: specific version (empty string for latest)
+//   - projectPath: optional path to project for .npmrc configuration
+// Returns formatted examples or an error if retrieval fails.
 func (h *NPMHandler) GetPackageExamples(ctx context.Context, packageName, version, projectPath string) (string, error) {
 	// Get the README
 	readme, err := h.GetPackageReadme(ctx, packageName, version, projectPath)
@@ -257,7 +298,17 @@ func (h *NPMHandler) GetPackageExamples(ctx context.Context, packageName, versio
 	return "No examples found in the package documentation.", nil
 }
 
-// GetPackageAPI retrieves API documentation for an NPM package
+// GetPackageAPI retrieves API documentation for an NPM package.
+// It attempts to extract API information from:
+//   1. Dedicated API section in README
+//   2. Function signatures in code blocks
+//   3. TypeScript type definitions if available
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the package
+//   - version: specific version (empty string for latest)
+//   - projectPath: optional path to project for .npmrc configuration
+// Returns formatted API documentation or an error if retrieval fails.
 func (h *NPMHandler) GetPackageAPI(ctx context.Context, packageName, version, projectPath string) (string, error) {
 	// Get the README
 	readme, err := h.GetPackageReadme(ctx, packageName, version, projectPath)
@@ -291,7 +342,15 @@ func (h *NPMHandler) GetPackageAPI(ctx context.Context, packageName, version, pr
 	return "No API documentation found in the package documentation.", nil
 }
 
-// SearchPackage searches for content within an NPM package
+// SearchPackage performs a search within an NPM package's documentation.
+// It searches through README content, code examples, and API documentation.
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the package to search within
+//   - query: search query string
+//   - fuzzySearch: whether to use fuzzy matching
+//   - projectPath: optional path to project for .npmrc configuration
+// Returns search results formatted as markdown or an error if search fails.
 func (h *NPMHandler) SearchPackage(ctx context.Context, packageName, query string, fuzzySearch bool, projectPath string) (string, error) {
 	// Get the README
 	readme, err := h.GetPackageReadme(ctx, packageName, "", projectPath)
@@ -345,7 +404,19 @@ func (h *NPMHandler) SearchPackage(ctx context.Context, packageName, query strin
 	return formattedResults.String(), nil
 }
 
-// DescribePackage provides a brief description of an NPM package
+// DescribePackage provides a brief, structured description of an NPM package.
+// The description includes:
+//   - Basic package information (name, version, description)
+//   - Documentation summary
+//   - Homepage and repository links
+//   - License information
+//   - Keywords and dependencies
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the package to describe
+//   - version: specific version (empty string for latest)
+//   - projectPath: optional path to project for .npmrc configuration
+// Returns formatted package description or an error if retrieval fails.
 func (h *NPMHandler) DescribePackage(ctx context.Context, packageName, version, projectPath string) (string, error) {
 	// Get package info
 	info, err := h.GetPackageInfo(ctx, packageName, version, projectPath)

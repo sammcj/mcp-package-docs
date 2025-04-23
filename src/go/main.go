@@ -13,23 +13,28 @@ import (
 	"github.com/sammcj/mcp-package-docs/src/go/utils"
 )
 
-// Version is set during build
+// Version is the current version of the package documentation server.
+// This is set during build time.
 var Version = "dev"
 
-// Cache provides simple in-memory caching for tool results
+// Cache represents a thread-safe in-memory cache for storing tool results.
+// It provides basic key-value storage with mutex-protected access for concurrent operations.
 type Cache struct {
 	mu    sync.RWMutex
 	items map[string]interface{}
 }
 
-// NewCache creates a new cache instance
+// NewCache creates a new Cache instance with an initialized internal map.
+// Returns a pointer to the newly created Cache.
 func NewCache() *Cache {
 	return &Cache{
 		items: make(map[string]interface{}),
 	}
 }
 
-// Get retrieves an item from the cache
+// Get retrieves an item from the cache using the provided key.
+// Returns the cached value and a boolean indicating whether the key was found.
+// This method is thread-safe for concurrent access.
 func (c *Cache) Get(key string) (interface{}, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -37,7 +42,8 @@ func (c *Cache) Get(key string) (interface{}, bool) {
 	return item, found
 }
 
-// Set adds an item to the cache
+// Set adds or updates an item in the cache with the specified key and value.
+// This method is thread-safe for concurrent access.
 func (c *Cache) Set(key string, value interface{}) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -68,7 +74,9 @@ func main() {
 	}
 }
 
-// DocResult represents the structured result of a documentation query
+// DocResult represents the structured result of a documentation query.
+// It contains various sections of documentation including description, usage examples,
+// and any potential errors encountered during the documentation retrieval process.
 type DocResult struct {
 	Description string `json:"description,omitempty"`
 	Usage       string `json:"usage,omitempty"`
@@ -76,7 +84,10 @@ type DocResult struct {
 	Error       string `json:"error,omitempty"`
 }
 
-// setupToolHandlers registers all tool handlers with the server
+// setupToolHandlers registers all tool handlers with the MCP server.
+// It initializes the required utility instances (command runner, HTTP client, etc.)
+// and sets up handlers for all supported package documentation tools.
+// Each handler is registered with appropriate parameter validation and error handling.
 func setupToolHandlers(srv *server.MCPServer, logger *log.Logger, cache *Cache) {
 	// Create utility instances
 	cmdRunner := utils.NewCommandRunner()

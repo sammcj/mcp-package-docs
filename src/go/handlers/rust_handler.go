@@ -11,7 +11,12 @@ import (
 	"github.com/sammcj/mcp-package-docs/src/go/utils"
 )
 
-// RustHandler provides functionality for handling Rust packages
+// RustHandler provides functionality for handling Rust package documentation.
+// It supports multiple documentation sources:
+//   - Local cargo and rustdoc commands
+//   - crates.io API for package metadata
+//   - docs.rs for detailed documentation and README content
+// The handler implements fallback mechanisms between these sources.
 type RustHandler struct {
 	cmdRunner  *utils.CommandRunner
 	httpClient *utils.HTTPClient
@@ -19,7 +24,12 @@ type RustHandler struct {
 	mdParser   *parsing.MarkdownParser
 }
 
-// NewRustHandler creates a new Rust handler
+// NewRustHandler creates a new Rust handler with the necessary dependencies.
+// Parameters:
+//   - cmdRunner: for executing cargo and rustdoc commands
+//   - httpClient: for fetching documentation from crates.io and docs.rs
+//   - fsUtils: for filesystem operations
+// Returns an initialized RustHandler instance.
 func NewRustHandler(
 	cmdRunner *utils.CommandRunner,
 	httpClient *utils.HTTPClient,
@@ -33,7 +43,16 @@ func NewRustHandler(
 	}
 }
 
-// DescribePackage provides a brief description of a Rust package
+// DescribePackage provides a comprehensive description of a Rust package.
+// It attempts to retrieve documentation in the following order:
+//   1. Local cargo/rustdoc documentation
+//   2. crates.io API for metadata
+//   3. docs.rs for detailed documentation
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the Rust package to describe
+//   - version: optional specific version to retrieve
+// Returns formatted documentation or an error if all retrieval methods fail.
 func (h *RustHandler) DescribePackage(ctx context.Context, packageName, version string) (string, error) {
 	// First try to get documentation using cargo
 	cargoInfo, err := h.getCargoInfo(ctx, packageName)
@@ -61,7 +80,11 @@ func (h *RustHandler) DescribePackage(ctx context.Context, packageName, version 
 	return "", fmt.Errorf("failed to get documentation for package %s: %w", packageName, err)
 }
 
-// getCargoInfo uses cargo to get package metadata
+// getCargoInfo uses the cargo command to get package metadata from local installation.
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the Rust package
+// Returns package metadata or an error if the cargo command fails.
 func (h *RustHandler) getCargoInfo(ctx context.Context, packageName string) (string, error) {
 	result := h.cmdRunner.Run(ctx, "cargo", "search", packageName, "--limit", "1")
 	if result.Error != nil {
@@ -71,7 +94,15 @@ func (h *RustHandler) getCargoInfo(ctx context.Context, packageName string) (str
 	return result.Stdout, nil
 }
 
-// getRustDocumentation uses rustdoc to get package documentation
+// getRustDocumentation uses rustdoc to get package documentation from local installation.
+// This method:
+//   1. Gets documentation path from rustup
+//   2. Checks if package documentation exists
+//   3. Reads and converts HTML documentation to markdown
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the Rust package
+// Returns formatted documentation or an error if retrieval fails.
 func (h *RustHandler) getRustDocumentation(ctx context.Context, packageName string) (string, error) {
 	// Try to get documentation from locally installed packages
 	result := h.cmdRunner.Run(ctx, "rustup", "doc", "--path")
@@ -106,7 +137,17 @@ func (h *RustHandler) getRustDocumentation(ctx context.Context, packageName stri
 	return markdown, nil
 }
 
-// fetchCratesIO attempts to fetch documentation from crates.io
+// fetchCratesIO attempts to fetch documentation from the crates.io API.
+// This provides comprehensive package metadata including:
+//   - Version information
+//   - Package description and metadata
+//   - Repository and documentation links
+//   - README content (via docs.rs integration)
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the Rust package
+//   - version: optional specific version
+// Returns formatted package information or an error if retrieval fails.
 func (h *RustHandler) fetchCratesIO(ctx context.Context, packageName, version string) (string, error) {
 	// Construct the URL for the crates.io API
 	url := fmt.Sprintf("https://crates.io/api/v1/crates/%s", packageName)
@@ -228,7 +269,13 @@ func (h *RustHandler) fetchCratesIO(ctx context.Context, packageName, version st
 	return result.String(), nil
 }
 
-// fetchDocsRs attempts to fetch documentation from docs.rs
+// fetchDocsRs attempts to fetch documentation from docs.rs website.
+// This provides detailed API documentation and examples.
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the Rust package
+//   - version: optional specific version
+// Returns formatted documentation or an error if retrieval fails.
 func (h *RustHandler) fetchDocsRs(ctx context.Context, packageName, version string) (string, error) {
 	// Construct the URL for docs.rs
 	url := fmt.Sprintf("https://docs.rs/%s", packageName)
@@ -276,7 +323,14 @@ func (h *RustHandler) fetchDocsRs(ctx context.Context, packageName, version stri
 	return result.String(), nil
 }
 
-// fetchDocsRsReadme attempts to fetch the README from docs.rs
+// fetchDocsRsReadme attempts to fetch the README from docs.rs.
+// This provides the package's README.md content, which often contains
+// detailed usage examples and getting started guides.
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the Rust package
+//   - version: optional specific version
+// Returns README content or an error if retrieval fails.
 func (h *RustHandler) fetchDocsRsReadme(ctx context.Context, packageName, version string) (string, error) {
 	// Construct the URL for docs.rs README
 	url := fmt.Sprintf("https://docs.rs/crate/%s", packageName)
@@ -293,7 +347,13 @@ func (h *RustHandler) fetchDocsRsReadme(ctx context.Context, packageName, versio
 	return string(data), nil
 }
 
-// extractPackageOverview extracts the package overview from docs.rs HTML
+// extractPackageOverview extracts the package overview from docs.rs markdown content.
+// It attempts to find the overview section using multiple patterns:
+//   1. Dedicated "Overview" section
+//   2. First non-heading paragraph after the title
+// Parameters:
+//   - markdown: the markdown content to extract overview from
+// Returns the extracted overview text or empty string if no overview is found.
 func (h *RustHandler) extractPackageOverview(markdown string) string {
 	// Look for the package overview section
 	overviewPattern := regexp.MustCompile(`(?s)# Overview\s+(.+?)(?:\n\n|\n#)`)
@@ -312,7 +372,17 @@ func (h *RustHandler) extractPackageOverview(markdown string) string {
 	return ""
 }
 
-// formatRustDocumentation formats the output from cargo and rustdoc
+// formatRustDocumentation formats the combined output from cargo and rustdoc.
+// It processes and combines:
+//   - Package metadata from cargo
+//   - Documentation content from rustdoc
+//   - Relevant sections extracted from the documentation
+// Parameters:
+//   - packageName: name of the Rust package
+//   - version: optional specific version
+//   - cargoInfo: metadata from cargo command
+//   - docResult: documentation from rustdoc
+// Returns formatted markdown documentation.
 func (h *RustHandler) formatRustDocumentation(packageName, version, cargoInfo, docResult string) string {
 	var result strings.Builder
 
@@ -373,7 +443,17 @@ func (h *RustHandler) formatRustDocumentation(packageName, version, cargoInfo, d
 	return result.String()
 }
 
-// SearchPackage searches for content within a Rust package
+// SearchPackage searches for content within a Rust package's documentation.
+// It fetches documentation from docs.rs and performs a search within:
+//   - Overview and general documentation
+//   - API documentation sections
+//   - Code examples
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the Rust package to search within
+//   - query: search query string
+//   - fuzzySearch: whether to use fuzzy matching
+// Returns formatted search results or an error if the search fails.
 func (h *RustHandler) SearchPackage(ctx context.Context, packageName, query string, fuzzySearch bool) (string, error) {
 	// Try to get documentation from docs.rs
 	markdown, err := h.fetchDocsRs(ctx, packageName, "")

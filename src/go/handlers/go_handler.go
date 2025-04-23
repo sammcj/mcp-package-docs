@@ -10,7 +10,9 @@ import (
 	"github.com/sammcj/mcp-package-docs/src/go/utils"
 )
 
-// GoHandler provides functionality for handling Go packages
+// GoHandler provides functionality for handling Go package documentation.
+// It supports retrieving package documentation through both the 'go doc' command
+// and pkg.go.dev website, with fallback mechanisms between the two sources.
 type GoHandler struct {
 	cmdRunner  *utils.CommandRunner
 	httpClient *utils.HTTPClient
@@ -18,7 +20,12 @@ type GoHandler struct {
 	mdParser   *parsing.MarkdownParser
 }
 
-// NewGoHandler creates a new Go handler
+// NewGoHandler creates a new Go handler with the necessary dependencies.
+// Parameters:
+//   - cmdRunner: for executing go doc commands
+//   - httpClient: for fetching documentation from pkg.go.dev
+//   - fsUtils: for filesystem operations
+// Returns an initialized GoHandler instance.
 func NewGoHandler(
 	cmdRunner *utils.CommandRunner,
 	httpClient *utils.HTTPClient,
@@ -32,7 +39,15 @@ func NewGoHandler(
 	}
 }
 
-// DescribePackage provides a brief description of a Go package
+// DescribePackage provides a comprehensive description of a Go package.
+// It attempts to retrieve documentation first using the local 'go doc' command,
+// falling back to pkg.go.dev if the local documentation is unavailable.
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the Go package to describe
+//   - symbol: optional specific symbol (type, function, etc.) to describe
+//   - projectPath: optional path to the project directory
+// Returns formatted documentation or an error if retrieval fails.
 func (h *GoHandler) DescribePackage(ctx context.Context, packageName, symbol, projectPath string) (string, error) {
 	// First try to get documentation using go doc command
 	docResult, err := h.getGoDocumentation(ctx, packageName, symbol)
@@ -50,7 +65,14 @@ func (h *GoHandler) DescribePackage(ctx context.Context, packageName, symbol, pr
 	return "", fmt.Errorf("failed to get documentation for package %s: %w", packageName, err)
 }
 
-// getGoDocumentation uses the go doc command to get package documentation
+// getGoDocumentation uses the go doc command to get package documentation.
+// It executes 'go doc' with appropriate arguments based on whether a specific
+// symbol is requested or just the package overview is needed.
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the Go package
+//   - symbol: optional symbol name to look up specific documentation
+// Returns the raw documentation output or an error if the command fails.
 func (h *GoHandler) getGoDocumentation(ctx context.Context, packageName, symbol string) (string, error) {
 	args := []string{"doc"}
 
@@ -68,7 +90,13 @@ func (h *GoHandler) getGoDocumentation(ctx context.Context, packageName, symbol 
 	return result.Stdout, nil
 }
 
-// fetchPkgGoDev attempts to fetch documentation from pkg.go.dev
+// fetchPkgGoDev attempts to fetch documentation from pkg.go.dev website.
+// This serves as a fallback when local documentation is unavailable.
+// It processes the HTML content to extract relevant documentation sections.
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the Go package
+// Returns formatted markdown documentation or an error if retrieval fails.
 func (h *GoHandler) fetchPkgGoDev(ctx context.Context, packageName string) (string, error) {
 	url := fmt.Sprintf("https://pkg.go.dev/%s", packageName)
 
@@ -105,7 +133,11 @@ func (h *GoHandler) fetchPkgGoDev(ctx context.Context, packageName string) (stri
 	return result.String(), nil
 }
 
-// extractPackageOverview extracts the package overview from pkg.go.dev HTML
+// extractPackageOverview extracts the package overview from pkg.go.dev HTML content.
+// It uses regex patterns to identify and extract the primary package description.
+// Parameters:
+//   - markdown: the converted markdown content from pkg.go.dev HTML
+// Returns the extracted overview text, or empty string if no overview is found.
 func (h *GoHandler) extractPackageOverview(markdown string) string {
 	// Look for the package overview section
 	overviewPattern := regexp.MustCompile(`(?s)package\s+\w+\s+(.+?)(?:\n\n|\n#)`)
@@ -116,7 +148,16 @@ func (h *GoHandler) extractPackageOverview(markdown string) string {
 	return ""
 }
 
-// formatGoDocumentation formats the output from go doc command
+// formatGoDocumentation formats the output from go doc command into structured markdown.
+// It processes the raw documentation to extract and organize:
+//   - Package overview
+//   - Function definitions and documentation
+//   - Type definitions and documentation
+// Parameters:
+//   - packageName: name of the Go package
+//   - symbol: optional symbol name if documenting a specific item
+//   - docResult: raw documentation from go doc command
+// Returns formatted markdown documentation.
 func (h *GoHandler) formatGoDocumentation(packageName, symbol, docResult string) string {
 	var result strings.Builder
 
@@ -235,7 +276,15 @@ func (h *GoHandler) formatGoDocumentation(packageName, symbol, docResult string)
 	return result.String()
 }
 
-// SearchPackage searches for content within a Go package
+// SearchPackage searches for content within a Go package's documentation.
+// It extracts and searches through function definitions, type definitions,
+// and general package documentation using configurable fuzzy matching.
+// Parameters:
+//   - ctx: context for the operation
+//   - packageName: name of the Go package to search within
+//   - query: search query string
+//   - fuzzySearch: whether to use fuzzy matching
+// Returns formatted search results or an error if the search fails.
 func (h *GoHandler) SearchPackage(ctx context.Context, packageName, query string, fuzzySearch bool) (string, error) {
 	// Get package documentation
 	docResult, err := h.getGoDocumentation(ctx, packageName, "")

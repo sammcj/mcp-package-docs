@@ -77,69 +77,115 @@ This document outlines the plan to rewrite the existing TypeScript-based MCP Pac
 
 **6. Github Actions and Makefile Setup:**
 
-- [x] Set up a basic `Makefile` for lint, build, test and version commands.
-- [x] Ensure that the release process includes updating the version both in the tags (if on the main branch aka doing a release) and the version that is reported by the built application.
+* [x] Set up a basic `Makefile` for lint, build, test and version commands.
+* [x] Ensure that the release process includes updating the version both in the tags (if on the main branch aka doing a release) and the version that is reported by the built application.
 
 After completing a phase you should check off the completed items, if new work is discovered that must be completed in the next phase that's not already documented add it to the list and mark it as a new item. Then stop and wait for the user to review the work and plan.
 
 ## Progress Summary (10/04/2025)
 
 ### Completed Items
+
 - [x] Initialised Go module
-- [x] Added core dependencies:
-  - `mcp-go` for the server framework
-  - `goquery` for HTML parsing
-  - `html-to-markdown` for converting HTML to Markdown
-  - `goldmark` for Markdown processing
-  - `fuzzysearch` for fuzzy search functionality
-- [x] Set up basic MCP server structure using `server.NewMCPServer`
-- [x] Defined core tool schemas for all required tools
-- [x] Implemented basic stdio transport using `server.ServeStdio`
-- [x] Implemented logging to stderr
-- [x] Implemented in-memory caching for tool results
-- [x] Implemented core utilities:
-  - HTTP client logic (`utils/http_client.go`)
-  - Command execution logic (`utils/cmd_runner.go`)
-  - File system checks (`utils/fs_utils.go`)
-  - `.npmrc` parsing logic (`utils/npmrc_parser.go`)
-- [x] Implemented parsing logic:
-  - HTML processing (`parsing/html_parser.go`)
-  - Markdown processing (`parsing/markdown_parser.go`)
-  - Fuzzy search functionality (`parsing/search.go`)
-- [x] Implemented language-specific handlers:
-  - NPM package handler (`handlers/npm_handler.go`)
-  - Go package handler (`handlers/go_handler.go`)
-  - Python package handler (`handlers/python_handler.go`)
-  - Rust package handler (`handlers/rust_handler.go`)
-  - Swift package handler (`handlers/swift_handler.go`)
-- [x] Implemented search functionality for all supported languages
-- [x] Fixed module path issues by updating the go.mod file to use the correct module path
+* [x] Added core dependencies:
+  * `mcp-go` for the server framework
+  * `goquery` for HTML parsing
+  * `html-to-markdown` for converting HTML to Markdown
+  * `goldmark` for Markdown processing
+  * `fuzzysearch` for fuzzy search functionality
+* [x] Set up basic MCP server structure using `server.NewMCPServer`
+* [x] Defined core tool schemas for all required tools
+* [x] Implemented basic stdio transport using `server.ServeStdio`
+* [x] Implemented logging to stderr
+* [x] Implemented in-memory caching for tool results
+* [x] Implemented core utilities:
+  * HTTP client logic (`utils/http_client.go`)
+  * Command execution logic (`utils/cmd_runner.go`)
+  * File system checks (`utils/fs_utils.go`)
+  * `.npmrc` parsing logic (`utils/npmrc_parser.go`)
+* [x] Implemented parsing logic:
+  * HTML processing (`parsing/html_parser.go`)
+  * Markdown processing (`parsing/markdown_parser.go`)
+  * Fuzzy search functionality (`parsing/search.go`)
+* [x] Implemented language-specific handlers:
+  * NPM package handler (`handlers/npm_handler.go`)
+  * Go package handler (`handlers/go_handler.go`)
+  * Python package handler (`handlers/python_handler.go`)
+  * Rust package handler (`handlers/rust_handler.go`)
+  * Swift package handler (`handlers/swift_handler.go`)
+* [x] Implemented search functionality for all supported languages
+* [x] Fixed module path issues by updating the go.mod file to use the correct module path
 
 ### Progress Update (10/04/2025)
 
 #### Recently Completed Items
-- [x] Implemented unit tests for core utilities:
-  - HTTP client tests (`utils/http_client_test.go`)
-  - Command runner tests (`utils/cmd_runner_test.go`)
-  - File system utilities tests (`utils/fs_utils_test.go`)
-  - NPMRC parser tests (`utils/npmrc_parser_test.go`)
-  - Search functionality tests (`parsing/search_test.go`)
-- [x] Set up GitHub Actions workflow for CI/CD:
-  - Created `.github/workflows/go-build.yml` for building and testing Go code
-  - Configured workflow to run on changes to Go code, Makefile, or workflow file
-  - Added steps for linting, building, testing, and generating coverage reports
-  - Set up release artifact generation for multiple platforms
 
-### Next Steps
-1. Implement or fix the unit tests for the remaining components:
-   - HTML parser tests
-   - Markdown parser tests
-   - Language-specific handler tests
-2. Implement caching for documentation results to improve performance
-3. Add more comprehensive error handling and logging
-4. Improve documentation extraction and formatting for better readability
-5. Consider adding support for additional package registries and sources
-6. Add integration tests to verify end-to-end functionality
+- [x] Implemented unit tests for core utilities:
+  * HTTP client tests (`utils/http_client_test.go`)
+  * Command runner tests (`utils/cmd_runner_test.go`)
+  * File system utilities tests (`utils/fs_utils_test.go`)
+  * NPMRC parser tests (`utils/npmrc_parser_test.go`)
+  * Search functionality tests (`parsing/search_test.go`)
+* [x] Set up GitHub Actions workflow for CI/CD:
+  * Created `.github/workflows/go-build.yml` for building and testing Go code
+  * Configured workflow to run on changes to Go code, Makefile, or workflow file
+  * Added steps for linting, building, testing, and generating coverage reports
+  * Set up release artifact generation for multiple platforms
+
+### Next Steps (Updated 23/04/2025)
+
+#### 1. Core Functionality Improvements
+
+- [ ] Add godoc comments to all exported types and functions across all packages
+* [ ] Implement proper error handling following MCP spec (ensuring no stdout/stderr output in stdio mode)
+* [ ] Create a configuration system for server settings
+  * Cache settings (size limits, expiration)
+  * Registry URLs and defaults
+  * Logging levels
+  * Performance tuning parameters
+* [ ] Enhance cache implementation:
+  * Add TTL/expiration for cached items
+  * Implement cache size limits
+  * Add optional persistence
+  * Define cache eviction policies
+
+#### 2. Testing Enhancements
+
+- [ ] Add missing unit tests:
+  * HTML parser tests
+  * Markdown parser tests
+  * Language-specific handler tests
+  * Configuration system tests
+  * Cache implementation tests
+* [ ] Implement integration tests:
+  * End-to-end functionality tests
+  * Cross-handler integration tests
+  * Error scenario tests
+* [ ] Add benchmark tests for performance-critical paths
+* [ ] Increase test coverage for error scenarios and edge cases
+
+#### 3. Documentation and Examples
+
+- [ ] Update README.md with Go rewrite details
+* [ ] Add comprehensive examples in godoc
+* [ ] Create debugging guidelines
+* [ ] Document configuration options
+* [ ] Improve documentation extraction and formatting
+* [ ] Document MCP compliance details
+
+#### 4. Performance
+
+- [ ] Optimise documentation extraction and parsing
+* [ ] Consider adding support for additional package registries and sources
+
+#### 5. Quality Assurance
+
+- [ ] Perform security audit of registry interactions
+* [ ] Implement proper input validation
+* [ ] Add proper error recovery mechanisms
+* [ ] Ensure thread safety in all components
+
+Each task will be implemented sequentially, with priority given to core functionality and testing to ensure a stable and reliable foundation. Progress will be tracked through regular commits and updates to this document.
 
 ## IMPORTANT INFORMATION
 
@@ -152,9 +198,9 @@ The implementation MUST be MCP compliant, meaning when running in stdio mode it 
 2. **Error Handling**: Return errors from handlers using standard Go errors or create custom error responses with `mcp.CallToolResult` with `isError: true`.
 
 3. **Tool Result Types**:
-   - Text results: `mcp.NewToolResultText("Your text here")`
-   - Multiple content types: Create a `mcp.CallToolResult` with an array of different content types (text, images, etc.)
-   - JSON results: Convert to string and use `mcp.NewToolResultText(jsonString)`
+   * Text results: `mcp.NewToolResultText("Your text here")`
+   * Multiple content types: Create a `mcp.CallToolResult` with an array of different content types (text, images, etc.)
+   * JSON results: Convert to string and use `mcp.NewToolResultText(jsonString)`
 
 4. **Request Hooks**: Consider using `server.WithHooks()` for debugging during development, but ensure they don't output to stdout in production.
 
@@ -164,13 +210,13 @@ The implementation MUST be MCP compliant, meaning when running in stdio mode it 
 
 # MCP (Model Context Protocol) Documentation Follows
 
-### Useful documentation:
+### Useful documentation
 
 mcp-go package usage examples
-- https://raw.githubusercontent.com/mark3labs/mcp-go/refs/heads/main/README.md
-- https://raw.githubusercontent.com/mark3labs/mcp-go/refs/heads/main/examples/everything/main.go
-- https://raw.githubusercontent.com/mark3labs/mcp-go/refs/heads/main/examples/custom_context/main.go
-- https://raw.githubusercontent.com/mark3labs/mcp-go/refs/heads/main/examples/filesystem_stdio_client/main.go
+* https://raw.githubusercontent.com/mark3labs/mcp-go/refs/heads/main/README.md
+* https://raw.githubusercontent.com/mark3labs/mcp-go/refs/heads/main/examples/everything/main.go
+* https://raw.githubusercontent.com/mark3labs/mcp-go/refs/heads/main/examples/custom_context/main.go
+* https://raw.githubusercontent.com/mark3labs/mcp-go/refs/heads/main/examples/filesystem_stdio_client/main.go
 
 # Relevant MCP Documentation
 
@@ -247,7 +293,6 @@ Servers offer any of the following features to clients:
 * **Resources**: Context and data, for the user or the AI model to use
 * **Prompts**: Templated messages and workflows for users
 * **Tools**: Functions for the AI model to execute
-
 
 # Architecture
 
@@ -423,7 +468,6 @@ example:
 This capability negotiation ensures clients and servers have a clear understanding of
 supported functionality while maintaining protocol extensibility.
 
-
 # Tools
 
 <Info>**Protocol Revision**: 2025-03-26</Info>
@@ -449,9 +493,9 @@ interaction model.
 
   Applications **SHOULD**:
 
-  * Provide UI that makes clear which tools are being exposed to the AI model
-  * Insert clear visual indicators when tools are invoked
-  * Present confirmation prompts to the user for operations, to ensure a human is in the
+* Provide UI that makes clear which tools are being exposed to the AI model
+* Insert clear visual indicators when tools are invoked
+* Present confirmation prompts to the user for operations, to ensure a human is in the
     loop
 </Warning>
 
@@ -1164,7 +1208,6 @@ The following MCP operations support pagination:
 ## Error Handling
 
 Invalid cursors **SHOULD** result in an error with code -32602 (Invalid params).
-
 
 END OF MCP DOCUMENTATION
 

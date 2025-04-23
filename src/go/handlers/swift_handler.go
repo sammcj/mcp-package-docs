@@ -12,7 +12,11 @@ import (
 	"github.com/sammcj/mcp-package-docs/src/go/utils"
 )
 
-// SwiftHandler provides functionality for handling Swift packages
+// SwiftHandler provides functionality for handling Swift package documentation.
+// It supports multiple documentation sources:
+//   - Local Swift Package Manager for installed packages
+//   - GitHub API for repository metadata and documentation
+// The handler implements fallback mechanisms between these sources.
 type SwiftHandler struct {
 	cmdRunner  *utils.CommandRunner
 	httpClient *utils.HTTPClient
@@ -20,7 +24,12 @@ type SwiftHandler struct {
 	mdParser   *parsing.MarkdownParser
 }
 
-// NewSwiftHandler creates a new Swift handler
+// NewSwiftHandler creates a new Swift handler with the necessary dependencies.
+// Parameters:
+//   - cmdRunner: for executing Swift Package Manager commands
+//   - httpClient: for fetching documentation from GitHub
+//   - fsUtils: for filesystem operations
+// Returns an initialized SwiftHandler instance.
 func NewSwiftHandler(
 	cmdRunner *utils.CommandRunner,
 	httpClient *utils.HTTPClient,
@@ -34,7 +43,16 @@ func NewSwiftHandler(
 	}
 }
 
-// DescribePackage provides a brief description of a Swift package
+// DescribePackage provides a comprehensive description of a Swift package.
+// It attempts to retrieve documentation in the following order:
+//   1. Local Swift Package Manager for installed packages (if projectPath provided)
+//   2. GitHub API for repository metadata and documentation
+// Parameters:
+//   - ctx: context for the operation
+//   - packageURL: URL of the Swift package (typically GitHub URL)
+//   - symbol: optional specific symbol to describe
+//   - projectPath: optional path to project with Package.swift
+// Returns formatted documentation or an error if all retrieval methods fail.
 func (h *SwiftHandler) DescribePackage(ctx context.Context, packageURL, symbol, projectPath string) (string, error) {
 	// First try to get documentation using Swift Package Manager
 	if projectPath != "" {
@@ -54,7 +72,17 @@ func (h *SwiftHandler) DescribePackage(ctx context.Context, packageURL, symbol, 
 	return "", fmt.Errorf("failed to get documentation for package %s: %w", packageURL, err)
 }
 
-// getSwiftPMInfo uses Swift Package Manager to get package metadata
+// getSwiftPMInfo uses Swift Package Manager to get package metadata and documentation.
+// This method:
+//   1. Verifies Package.swift exists in the project path
+//   2. Checks if the package is a dependency
+//   3. Retrieves package information using swift package show-dependencies
+//   4. Reads and processes the package's README if available
+// Parameters:
+//   - ctx: context for the operation
+//   - packageURL: URL of the Swift package
+//   - projectPath: path to project with Package.swift
+// Returns formatted package information or an error if retrieval fails.
 func (h *SwiftHandler) getSwiftPMInfo(ctx context.Context, packageURL, projectPath string) (string, error) {
 	// Check if Package.swift exists in the project path
 	packageSwiftPath := fmt.Sprintf("%s/Package.swift", projectPath)
@@ -166,7 +194,16 @@ func (h *SwiftHandler) getSwiftPMInfo(ctx context.Context, packageURL, projectPa
 	return sb.String(), nil
 }
 
-// fetchGitHubInfo attempts to fetch documentation from GitHub
+// fetchGitHubInfo attempts to fetch documentation from GitHub's API.
+// This method retrieves:
+//   - Repository metadata and description
+//   - README content in markdown format
+//   - Package.swift content for dependencies and products
+//   - Additional repository information (stars, forks, etc.)
+// Parameters:
+//   - ctx: context for the operation
+//   - packageURL: GitHub URL of the Swift package
+// Returns formatted package information or an error if retrieval fails.
 func (h *SwiftHandler) fetchGitHubInfo(ctx context.Context, packageURL string) (string, error) {
 	// Extract owner and repo from GitHub URL
 	owner, repo, err := h.extractGitHubOwnerRepo(packageURL)
@@ -309,7 +346,13 @@ func (h *SwiftHandler) fetchGitHubInfo(ctx context.Context, packageURL string) (
 	return sb.String(), nil
 }
 
-// extractGitHubOwnerRepo extracts the owner and repository name from a GitHub URL
+// extractGitHubOwnerRepo extracts the owner and repository name from a GitHub URL.
+// Supports multiple GitHub URL formats:
+//   - https://github.com/owner/repo
+//   - git@github.com:owner/repo.git
+// Parameters:
+//   - url: GitHub repository URL
+// Returns owner name, repository name, and any error that occurred.
 func (h *SwiftHandler) extractGitHubOwnerRepo(url string) (string, string, error) {
 	// Match GitHub URL patterns
 	patterns := []string{
@@ -332,7 +375,11 @@ func (h *SwiftHandler) extractGitHubOwnerRepo(url string) (string, string, error
 	return "", "", fmt.Errorf("could not extract owner and repository from URL: %s", url)
 }
 
-// extractPackageNameFromURL extracts the package name from a URL
+// extractPackageNameFromURL extracts the package name from a URL.
+// Takes the last component of the URL path and removes any .git suffix.
+// Parameters:
+//   - url: package URL
+// Returns the extracted package name or empty string if extraction fails.
 func (h *SwiftHandler) extractPackageNameFromURL(url string) string {
 	// Extract the last part of the URL
 	parts := strings.Split(url, "/")
@@ -345,7 +392,11 @@ func (h *SwiftHandler) extractPackageNameFromURL(url string) string {
 	return strings.TrimSuffix(lastPart, ".git")
 }
 
-// decodeBase64 decodes a base64 encoded string
+// decodeBase64 decodes a base64 encoded string from GitHub API responses.
+// Handles GitHub's base64 format by removing newlines before decoding.
+// Parameters:
+//   - encoded: base64 encoded string
+// Returns decoded string or error if decoding fails.
 func (h *SwiftHandler) decodeBase64(encoded string) (string, error) {
 	// GitHub API returns base64 content with newlines, remove them
 	encoded = strings.ReplaceAll(encoded, "\n", "")
@@ -356,7 +407,13 @@ func (h *SwiftHandler) decodeBase64(encoded string) (string, error) {
 	return string(data), nil
 }
 
-// extractDependenciesFromPackageSwift extracts dependencies from Package.swift content
+// extractDependenciesFromPackageSwift extracts dependencies from Package.swift content.
+// Parses package dependency declarations using regex to find:
+//   - Package URLs
+//   - Version requirements
+// Parameters:
+//   - content: Package.swift file content
+// Returns list of formatted dependency strings.
 func (h *SwiftHandler) extractDependenciesFromPackageSwift(content string) []string {
 	var dependencies []string
 
@@ -372,7 +429,11 @@ func (h *SwiftHandler) extractDependenciesFromPackageSwift(content string) []str
 	return dependencies
 }
 
-// extractProductsFromPackageSwift extracts products from Package.swift content
+// extractProductsFromPackageSwift extracts products from Package.swift content.
+// Identifies both library and executable products in the package manifest.
+// Parameters:
+//   - content: Package.swift file content
+// Returns list of product names.
 func (h *SwiftHandler) extractProductsFromPackageSwift(content string) []string {
 	var products []string
 
@@ -388,7 +449,16 @@ func (h *SwiftHandler) extractProductsFromPackageSwift(content string) []string 
 	return products
 }
 
-// SearchPackage searches for content within a Swift package
+// SearchPackage searches for content within a Swift package's documentation.
+// It primarily searches through:
+//   - README content from GitHub
+//   - Package documentation sections
+// Parameters:
+//   - ctx: context for the operation
+//   - packageURL: GitHub URL of the Swift package
+//   - query: search query string
+//   - fuzzySearch: whether to use fuzzy matching
+// Returns formatted search results or an error if the search fails.
 func (h *SwiftHandler) SearchPackage(ctx context.Context, packageURL, query string, fuzzySearch bool) (string, error) {
 	// Extract owner and repo from GitHub URL
 	owner, repo, err := h.extractGitHubOwnerRepo(packageURL)

@@ -34,3 +34,6 @@ coverage/
 *.tmp
 *.temp
 .cache/
+
+src/go/mcp-package-docs
+src/go/go
