@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/sammcj-mcp-package-docs-badge.png)](https://mseep.ai/app/sammcj-mcp-package-docs)
+
 # Package Documentation MCP Server
 
 An MCP (Model Context Protocol) server that provides LLMs with efficient access to package documentation across multiple programming languages and language server protocol (LSP) capabilities.
