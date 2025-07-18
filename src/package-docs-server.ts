@@ -7,7 +7,7 @@ import {
   McpError,
 } from "@modelcontextprotocol/sdk/types.js"
 import { getToolDefinitions } from "./tool-handlers.js"
-import { exec } from "child_process"
+import { execFile } from "child_process"
 import { promisify } from "util"
 import axios from "axios"
 import { fileURLToPath } from "url"
@@ -27,7 +27,47 @@ const packageJson = JSON.parse(
   readFileSync(join(__dirname, "..", "package.json"), "utf-8"),
 )
 
-const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
+
+/**
+ * Sanitise input to prevent command injection
+ */
+function sanitiseInput(input: string): string {
+  // Remove shell metacharacters and limit to alphanumeric, dots, hyphens, underscores, and forward slashes
+  return input.replace(/[^a-zA-Z0-9.\-_/]/g, '')
+}
+
+/**
+ * Safely execute go doc command using execFile
+ */
+async function safeGoDoc(packageName: string, symbol?: string): Promise<{ stdout: string }> {
+  const sanitisedPackage = sanitiseInput(packageName)
+  const args = ['doc']
+
+  if (symbol) {
+    const sanitisedSymbol = sanitiseInput(symbol)
+    args.push(`${sanitisedPackage}.${sanitisedSymbol}`)
+  } else {
+    args.push(sanitisedPackage)
+  }
+
+  return await execFileAsync('go', args)
+}
+
+/**
+ * Safely execute go list command using execFile
+ */
+async function safeGoList(packageName: string): Promise<{ stdout: string }> {
+  const sanitisedPackage = sanitiseInput(packageName)
+  return await execFileAsync('go', ['list', '-f', '{{.Dir}}', sanitisedPackage])
+}
+
+/**
+ * Safely execute python command using execFile
+ */
+async function safePythonExec(code: string): Promise<{ stdout: string }> {
+  return await execFileAsync('python3', ['-c', code])
+}
 
 
 export class PackageDocsServer {
@@ -336,7 +376,7 @@ export class PackageDocsServer {
       }
 
       // Try to find the package in GOPATH
-      const { stdout } = await execAsync(`go list -f '{{.Dir}}' ${packageName}`)
+      const { stdout } = await safeGoList(packageName)
       return !!stdout.trim()
     } catch {
       // If the command fails, the package is likely not installed
@@ -356,7 +396,7 @@ import sys
 spec = importlib.util.find_spec('${packageName}')
 print(spec is not None)
 `
-      const { stdout } = await execAsync(`python3 -c "${pythonCode}"`)
+      const { stdout } = await safePythonExec(pythonCode)
       return stdout.trim() === "True"
     } catch {
       return false
@@ -408,10 +448,7 @@ print(spec is not None)
    */
   private async getLocalGoDoc(packageName: string, symbol?: string): Promise<DocResult> {
     try {
-      const cmd = symbol
-        ? `go doc ${packageName}.${symbol}`
-        : `go doc ${packageName}`
-      const { stdout } = await execAsync(cmd)
+      const { stdout } = await safeGoDoc(packageName, symbol)
 
       // Parse the go doc output into a structured format
       const lines = stdout.split("\n")
@@ -467,7 +504,7 @@ import ${packageName}
 help(${packageName})
 `
 
-      const { stdout } = await execAsync(`python3 -c "${pythonCode}"`)
+      const { stdout } = await safePythonExec(pythonCode)
 
       // Parse the Python help output into a structured format
       const lines = stdout.split("\n")
@@ -577,11 +614,12 @@ help(${packageName})
 
       // Try to get documentation using swift-doc if available
       try {
-        const cmd = symbol
-          ? `swift doc generate ${packageName} --module-name ${packageName} --symbol ${symbol}`
-          : `swift doc generate ${packageName} --module-name ${packageName}`
-
-        const { stdout } = await execAsync(cmd)
+        // Use execFileAsync for safer command execution
+        const args = ['doc', 'generate', packageName, '--module-name', packageName]
+        if (symbol) {
+          args.push('--symbol', symbol)
+        }
+        const { stdout } = await execFileAsync('swift', args)
         return {
           description: stdout.trim()
         }
@@ -760,7 +798,7 @@ help(${packageName})
 
             // First try using go doc command (works for standard library and cached modules)
             try {
-              const { stdout } = await execAsync(`go doc ${packageName}`)
+              const { stdout } = await safeGoDoc(packageName)
               docContent = this.searchUtils.parseGoDoc(stdout)
               docFetched = true
             } catch (cmdError) {
@@ -794,7 +832,7 @@ help(${packageName})
             if (!docFetched && packageName.includes('github.com')) {
               try {
                 // Extract GitHub owner and repo from the package name
-                const githubMatch = packageName.match(/github\.com\/([^\/]+)\/([^\/]+)/)
+                const githubMatch = packageName.match(/github\.com\/([^/]+)\/([^/]+)/)
                 if (githubMatch) {
                   const owner = githubMatch[1]
                   const repo = githubMatch[2]
@@ -1590,10 +1628,7 @@ help(${packageName})
 
       try {
         // First try using go doc command (works for standard library and cached modules)
-        const cmd = symbol
-          ? `go doc ${packageName}.${symbol}`
-          : `go doc ${packageName}`
-        const { stdout } = await execAsync(cmd)
+        const { stdout } = await safeGoDoc(packageName, symbol)
 
         // Parse the output into a structured format
         const lines = stdout.split("\n")
@@ -1662,7 +1697,7 @@ import "${packageName}"
         if (packageName.includes('github.com')) {
           try {
             // Extract GitHub owner and repo from the package name
-            const githubMatch = packageName.match(/github\.com\/([^\/]+)\/([^\/]+)/)
+            const githubMatch = packageName.match(/github\.com\/([^/]+)\/([^/]+)/)
             if (githubMatch) {
               const owner = githubMatch[1]
               const repo = githubMatch[2]
