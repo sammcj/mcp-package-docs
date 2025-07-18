@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.28](https://github.com/sammcj/mcp-package-docs/compare/v0.1.27...v0.1.28) (2025-07-18)
+
+
+### Bug Fixes
+
+* **rustdoc:** fixup ([0fb05b9](https://github.com/sammcj/mcp-package-docs/commit/0fb05b9c6b46fe00908233754995a60b16016e1d))
+
 ### [0.1.27](https://github.com/sammcj/mcp-package-docs/compare/v0.1.26...v0.1.27) (2025-07-18)
 
 
