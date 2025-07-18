@@ -89,14 +89,24 @@ async function rustFetch(
 
 		const contentType = response.headers.get("content-type");
 		const isJson = contentType?.includes("application/json");
-		const data = isJson ? await response.json() : await response.text();
 
-		return {
-			data,
-			status: response.status,
-			headers: response.headers,
-			contentType: isJson ? "json" : "text",
-		};
+		if (isJson) {
+			const data = await response.json() as Record<string, unknown>;
+			return {
+				data,
+				status: response.status,
+				headers: response.headers,
+				contentType: "json" as const,
+			};
+		} else {
+			const data = await response.text();
+			return {
+				data,
+				status: response.status,
+				headers: response.headers,
+				contentType: "text" as const,
+			};
+		}
 	} catch (error) {
 		logger.error(`Error making request to ${url}`, { error });
 		throw error;

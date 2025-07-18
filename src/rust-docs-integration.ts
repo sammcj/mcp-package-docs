@@ -238,7 +238,7 @@ export class RustDocsHandler {
       const $ = cheerio.load(response.data);
       const features: FeatureFlag[] = [];
 
-      $(".feature").each((_, element) => {
+      $(".feature").each((_: number, element: any) => {
         const name = $(element).find(".feature-name").text().trim();
         const description = $(element).find(".feature-description").text().trim();
         const enabled = $(element).hasClass("feature-enabled");
@@ -357,7 +357,7 @@ export class RustDocsHandler {
         const $ = cheerio.load(response.data);
         const symbols: SymbolDefinition[] = [];
 
-        $(".search-results a").each((_, element) => {
+        $(".search-results a").each((_: number, element: any) => {
           const name = $(element).find(".result-name path").text().trim();
           const kind = $(element).find(".result-name typename").text().trim();
           const path = $(element).attr("href") || "";
@@ -391,4 +391,3 @@ export class RustDocsHandler {
     }
   }
 }
-
