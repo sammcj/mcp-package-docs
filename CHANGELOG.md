@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.27](https://github.com/sammcj/mcp-package-docs/compare/v0.1.26...v0.1.27) (2025-07-18)
+
+
+### Bug Fixes
+
+* **security:** fix GHSA-vf9j-h32g-2764 ([#13](https://github.com/sammcj/mcp-package-docs/issues/13)) ([cb4ad49](https://github.com/sammcj/mcp-package-docs/commit/cb4ad49615275379fd6f2f1cf1ec4731eec56eb9))
+
 ### [0.1.26](https://github.com/sammcj/mcp-package-docs/compare/v0.1.25...v0.1.26) (2025-04-04)
 
 ### [0.1.25](https://github.com/sammcj/mcp-package-docs/compare/v0.1.24...v0.1.25) (2025-03-18)
