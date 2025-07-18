@@ -2,9 +2,7 @@
 
 An MCP (Model Context Protocol) server that provides LLMs with efficient access to package documentation across multiple programming languages and language server protocol (LSP) capabilities.
 
-[![smithery badge](https://smithery.ai/badge/mcp-package-docs)](https://smithery.ai/server/mcp-package-docs)
-
-<a href="https://glama.ai/mcp/servers/mrk7ul7nz7"><img width="380" height="200" src="https://glama.ai/mcp/servers/mrk7ul7nz7/badge" alt="Package Docs Server MCP server" /></a>
+**_Note: I am not actively maintaining the codebase at present. While it doesn't provide access to private package documentation - the [Context7](https://github.com/upstash/context7) MCP server and service meets my needs which are mostly for public package documentation. I personally use Context7 via my [mcp-devtools](https://github.com/sammcj/mcp-devtools) MCP server which is actively maintained._**
 
 ## Features
 
@@ -40,16 +38,10 @@ An MCP (Model Context Protocol) server that provides LLMs with efficient access 
 
 ## Installation
 
+Note: I do not recommend using `npx -y` to run your MCP servers in production as you're esentially trusting whatever package you're downloading off the internet at that moment in time. I highly recommend cloning the repository locally or building into a container image.
+
 ```bash
 npx -y mcp-package-docs
-```
-
-### Installing via Smithery
-
-To install Package Docs for Claude Desktop automatically via [Smithery](https://smithery.ai/server/mcp-package-docs):
-
-```bash
-npx -y @smithery/cli install mcp-package-docs --client claude
 ```
 
 ## Usage
